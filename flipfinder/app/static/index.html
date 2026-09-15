@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlipFinder</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171c22; --panel2: #1e252d; --border: #2a333d;
+    --text: #dde4ea; --muted: #8a97a3; --green: #3ecf6e; --amber: #e8b23e;
+    --red: #e05555; --accent: #4da3ff;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 'Segoe UI', system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
+  nav button { background: none; border: none; color: var(--muted); font: inherit; padding: 6px 12px; cursor: pointer; border-radius: 6px; }
+  nav button.on { background: var(--panel2); color: var(--text); }
+  #stat { margin-left: auto; color: var(--muted); font-size: 12px; }
+  main { flex: 1; position: relative; overflow: hidden; }
+  .view { position: absolute; inset: 0; display: none; }
+  .view.on { display: flex; }
+
+  /* Map */
+  #map { flex: 1; background: #0b0d10; }
+  .leaflet-tile { filter: invert(1) hue-rotate(180deg) brightness(0.75) contrast(0.9) saturate(0.4); }
+  #panel { width: 380px; background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; padding: 16px; display: none; }
+  #panel.open { display: block; }
+  .addr { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 10px 0; font-size: 13px; }
+  .grid b { color: var(--text); font-weight: 600; }
+  .grid span { color: var(--muted); }
+  .scorebar { height: 8px; border-radius: 4px; background: var(--panel2); margin: 6px 0 14px; overflow: hidden; }
+  .scorebar i { display: block; height: 100%; background: linear-gradient(90deg, var(--red), var(--amber), var(--green)); }
+  .remarks { font-size: 12.5px; color: var(--muted); background: var(--panel2); border-radius: 8px; padding: 10px; margin: 10px 0; max-height: 130px; overflow-y: auto; }
+  .comp { font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+  .comp div { display: flex; justify-content: space-between; padding: 2px 0; }
+  a.ext { color: var(--accent); font-size: 12px; text-decoration: none; }
+
+  /* Label widget */
+  .verdicts { display: flex; gap: 8px; margin: 12px 0 8px; }
+  .verdicts button { flex: 1; padding: 10px 0; border-radius: 8px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+  .verdicts button:hover { border-color: var(--muted); }
+  .v-pass.picked { background: #3a2326; border-color: var(--red); }
+  .v-maybe.picked { background: #3a3323; border-color: var(--amber); }
+  .v-deal.picked { background: #1f3a29; border-color: var(--green); }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .tags button { font-size: 11.5px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; }
+  .tags button.picked { border-color: var(--accent); color: var(--accent); }
+
+  /* Triage */
+  #triage { flex-direction: column; align-items: center; overflow-y: auto; padding: 24px; }
+  .card { width: 560px; max-width: 100%; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+  .card img { width: 100%; height: 300px; object-fit: cover; background: var(--panel2); display: block; }
+  .card .body { padding: 16px; }
+  .tbar { width: 560px; max-width: 100%; display: flex; align-items: center; gap: 12px; margin-bottom: 12px; color: var(--muted); font-size: 12px; }
+  .tbar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .keyhint { margin-left: auto; }
+  kbd { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+
+  /* Metrics */
+  #metrics { flex-direction: column; overflow-y: auto; padding: 24px; gap: 16px; align-items: flex-start; }
+  .tiles { display: flex; gap: 12px; flex-wrap: wrap; }
+  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 20px; min-width: 150px; }
+  .tile .big { font-size: 26px; font-weight: 700; }
+  .tile .lbl { color: var(--muted); font-size: 12px; }
+  .box { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; width: 100%; max-width: 760px; }
+  .box h3 { font-size: 13px; margin-bottom: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .box table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .box td, .box th { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  .box th { color: var(--muted); font-weight: 500; }
+  #fitbtn { background: var(--accent); border: none; color: #06121f; font: inherit; font-weight: 600; padding: 9px 18px; border-radius: 8px; cursor: pointer; }
+  #fitout { white-space: pre-wrap; font-family: Consolas, monospace; font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .empty { color: var(--muted); padding: 40px; text-align: center; width: 100%; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FlipFinder</h1>
+  <nav>
+    <button data-v="mapview" class="on">Map</button>
+    <button data-v="triage">Triage</button>
+    <button data-v="metrics">Metrics</button>
+  </nav>
+  <span id="stat"></span>
+</header>
+<main>
+  <div id="mapview" class="view on">
+    <div id="map"></div>
+    <div id="panel"></div>
+  </div>
+  <div id="triage" class="view"></div>
+  <div id="metrics" class="view"></div>
+</main>
+<script>
+const TAGS = ["bad area","reno too deep","overpriced","good bones","wrong size","weird layout","bad comps","flood/structural"];
+const V_NAMES = ["Pass","Maybe","Deal"];
+let blind = localStorage.getItem("ff_blind") === "1";
+let map, markers = [], current = null, triageCur = null;
+
+const $ = s => document.querySelector(s);
+const fmt$ = v => v == null ? "—" : "$" + Math.round(v).toLocaleString();
+const fmt = v => v == null ? "—" : Math.round(v).toLocaleString();
+const loc = l => l.city + (l.zip ? " " + l.zip : "");
+const pct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
+
+// ---- tabs ----
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.remove("on"));
+  document.querySelectorAll(".view").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  $("#" + b.dataset.v).classList.add("on");
+  if (b.dataset.v === "triage") loadTriage();
+  if (b.dataset.v === "metrics") loadMetrics();
+  if (b.dataset.v === "mapview") setTimeout(() => map.invalidateSize(), 50);
+});
+
+// ---- map ----
+function scoreColor(s) {
+  if (s == null) return "#666";
+  const h = Math.round(s * 120);          // red -> green
+  return `hsl(${h} 70% 50%)`;
+}
+async function loadMap() {
+  const rows = await (await fetch("/api/listings")).json();
+  $("#stat").textContent = rows.length + " scored listings";
+  markers.forEach(m => m.remove());
+  markers = [];
+  if (!rows.length) return;
+  const bounds = [];
+  rows.forEach(r => {
+    const m = L.circleMarker([r.lat, r.lng], {
+      radius: 7, color: r.labeled ? "#fff" : "transparent", weight: 1.5,
+      fillColor: scoreColor(r.score), fillOpacity: 0.85,
+    }).addTo(map);
+    m.on("click", () => openPanel(r.id));
+    m.bindTooltip(`${r.address} — ${fmt$(r.price)} · score ${r.score.toFixed(2)}`);
+    markers.push(m);
+    bounds.push([r.lat, r.lng]);
+  });
+  map.invalidateSize();
+  map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
+}
+function labelWidget(l, onDone) {
+  const picked = new Set();
+  const div = document.createElement("div");
+  div.innerHTML = `
+    <div class="verdicts">
+      ${V_NAMES.map((n, i) => `<button class="v-${n.toLowerCase()}" data-v="${i}">${n} <kbd>${i+1}</kbd></button>`).join("")}
+    </div>
+    <div class="tags">${TAGS.map(t => `<button data-t="${t}">${t}</button>`).join("")}</div>`;
+  div.querySelectorAll(".tags button").forEach(b => b.onclick = () => {
+    b.classList.toggle("picked");
+    picked.has(b.dataset.t) ? picked.delete(b.dataset.t) : picked.add(b.dataset.t);
+  });
+  div.querySelectorAll(".verdicts button").forEach(b => b.onclick = async () => {
+    await fetch("/api/labels", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ listing_id: l.id, verdict: +b.dataset.v, tags: [...picked], blind }),
+    });
+    onDone(+b.dataset.v);
+  });
+  if (l.label) {
+    const b = div.querySelector(`.verdicts button[data-v="${l.label.verdict}"]`);
+    if (b) b.classList.add("picked");
+  }
+  return div;
+}
+async function openPanel(id) {
+  const l = await (await fetch("/api/listing/" + id)).json();
+  current = l;
+  const c = l.components || {};
+  const p = $("#panel");
+  p.classList.add("open");
+  p.innerHTML = `
+    <div class="addr">${l.address}</div>
+    <div class="sub">${loc(l)} · <a class="ext" href="${l.url}" target="_blank">Redfin ↗</a></div>
+    ${l.photos.length ? `<img src="${l.photos[0]}" style="width:100%;border-radius:8px;margin-bottom:10px">` : ""}
+    ${l.score != null && !blind ? `
+      <div><b>Score ${l.score.toFixed(2)}</b></div>
+      <div class="scorebar"><i style="width:${l.score * 100}%"></i></div>` : ""}
+    <div class="grid">
+      <span>Price</span><b>${fmt$(l.price)}</b>
+      <span>Sqft</span><b>${fmt(l.sqft)}</b>
+      <span>Beds / Baths</span><b>${fmt(l.beds)} / ${fmt(l.baths)}</b>
+      <span>Year built</span><b>${l.year_built ?? "—"}</b>
+      <span>DOM</span><b>${fmt(l.dom)}</b>
+      <span>$/sqft</span><b>${l.ppsf ? "$" + l.ppsf.toFixed(0) : "—"}</b>
+    </div>
+    ${l.remarks ? `<div class="remarks">${l.remarks}</div>` : ""}
+    ${!blind && c.arv ? `<div class="comp">
+      <div><span>ARV (${c.comp_count} comps)</span><b>${fmt$(c.arv)}</b></div>
+      <div><span>Reno (${c.reno_tier})</span><b>${fmt$(c.reno_cost)}</b></div>
+      <div><span>Spread</span><b>${fmt$(c.spread)}</b></div>
+      <div><span>Margin</span><b>${pct(c.margin)}</b></div>
+      <div><span>Confidence</span><b>${c.confidence.toFixed(2)}</b></div>
+      <div><span>Liquidity</span><b>${c.liquidity.toFixed(2)}</b></div>
+      <div><span>Distress</span><b>${(c.distress ?? 0).toFixed(2)}</b></div>
+    </div>` : ""}
+    <div id="pw"></div>`;
+  p.querySelector("#pw").appendChild(labelWidget(l, () => { openPanel(id); loadMap(); }));
+}
+
+// ---- triage ----
+async function loadTriage() {
+  const t = $("#triage");
+  const l = await (await fetch("/api/triage/next")).json();
+  if (l.done) { t.innerHTML = `<div class="empty">All scored listings are labeled. Re-run the pipeline for fresh inventory.</div>`; return; }
+  triageCur = l;
+  const c = l.components || {};
+  t.innerHTML = `
+    <div class="tbar">
+      <span>${l.remaining} unlabeled</span>
+      <label><input type="checkbox" id="blindchk" ${blind ? "checked" : ""}> blind mode (hide algo score)</label>
+      <span class="keyhint"><kbd>1</kbd> pass · <kbd>2</kbd> maybe · <kbd>3</kbd> deal</span>
+    </div>
+    <div class="card">
+      ${l.photos.length ? `<img src="${l.photos[0]}">` : ""}
+      <div class="body">
+        <div class="addr">${l.address}</div>
+        <div class="sub">${loc(l)} · <a class="ext" href="${l.url}" target="_blank">Redfin ↗</a></div>
+        <div class="grid">
+          <span>Price</span><b>${fmt$(l.price)}</b>
+          <span>Sqft</span><b>${fmt(l.sqft)}</b>
+          <span>Beds / Baths</span><b>${fmt(l.beds)} / ${fmt(l.baths)}</b>
+          <span>Year built</span><b>${l.year_built ?? "—"}</b>
+          <span>DOM</span><b>${fmt(l.dom)}</b>
+          ${!blind ? `<span>Algo score</span><b>${l.score?.toFixed(2) ?? "—"}</b>
+                      <span>Margin</span><b>${pct(c.margin)}</b>` : ""}
+        </div>
+        ${l.remarks ? `<div class="remarks">${l.remarks}</div>` : ""}
+        <div id="tw"></div>
+      </div>
+    </div>`;
+  $("#blindchk").onchange = e => { blind = e.target.checked; localStorage.setItem("ff_blind", blind ? "1" : "0"); loadTriage(); };
+  $("#tw").appendChild(labelWidget(l, () => loadTriage()));
+}
+document.addEventListener("keydown", e => {
+  if (!$("#triage").classList.contains("on") || !triageCur) return;
+  if (["1", "2", "3"].includes(e.key)) {
+    const b = $(`#tw .verdicts button[data-v="${+e.key - 1}"]`);
+    if (b) b.click();
+  }
+});
+
+// ---- metrics ----
+async function loadMetrics() {
+  const m = await (await fetch("/api/metrics")).json();
+  const dis = m.disagreements;
+  const row = r => `<tr><td>${r.address}</td><td>${fmt$(r.price)}</td><td>${r.score}</td></tr>`;
+  $("#metrics").innerHTML = `
+    <div class="tiles">
+      <div class="tile"><div class="big">${m.labels.total}</div><div class="lbl">labels (${m.labels.pass}P / ${m.labels.maybe}M / ${m.labels.deal}D)</div></div>
+      <div class="tile"><div class="big">${m.holdout_spearman ?? "—"}</div><div class="lbl">holdout spearman</div></div>
+      <div class="tile"><div class="big">${m.holdout_p20 ?? "—"}</div><div class="lbl">holdout precision@20</div></div>
+      <div class="tile"><div class="big">v${m.scorer_version}</div><div class="lbl">scorer version</div></div>
+      <div class="tile"><div class="big">${m.scored_listings}</div><div class="lbl">scored listings</div></div>
+    </div>
+    <div class="box">
+      <h3>Current weights</h3>
+      <table><tr>${Object.keys(m.weights).map(k => `<th>${k}</th>`).join("")}</tr>
+             <tr>${Object.values(m.weights).map(v => `<td>${v}</td>`).join("")}</tr></table>
+      <div style="margin-top:12px"><button id="fitbtn">Refit weights from labels</button></div>
+      <div id="fitout"></div>
+    </div>
+    <div class="box"><h3>Algo likes it, you passed</h3>
+      <table><tr><th>Address</th><th>Price</th><th>Score</th></tr>${dis.algo_likes_you_pass.map(row).join("") || "<tr><td colspan=3>none</td></tr>"}</table></div>
+    <div class="box"><h3>You like it, algo is cold</h3>
+      <table><tr><th>Address</th><th>Price</th><th>Score</th></tr>${dis.you_like_algo_cold.map(row).join("") || "<tr><td colspan=3>none</td></tr>"}</table></div>
+    <div class="box"><h3>Recent scorer versions</h3>
+      <table><tr><th>v</th><th>train n</th><th>holdout ρ</th><th>p@20</th><th>promoted</th><th>note</th></tr>
+      ${m.recent_versions.map(v => `<tr><td>${v.version}</td><td>${v.train_n}</td><td>${v.holdout_spearman ?? "—"}</td><td>${v.holdout_p20 ?? "—"}</td><td>${v.promoted ? "yes" : "no"}</td><td>${v.note}</td></tr>`).join("") || "<tr><td colspan=6>none yet</td></tr>"}</table></div>`;
+  $("#fitbtn").onclick = async () => {
+    $("#fitbtn").disabled = true;
+    const out = await (await fetch("/api/fit", { method: "POST" })).json();
+    $("#fitout").textContent = JSON.stringify(out, null, 2);
+    $("#fitbtn").disabled = false;
+    if (out.promoted) loadMap();
+  };
+}
+
+// ---- boot ----
+map = L.map("map", { zoomControl: true }).setView([41.49, -81.69], 11);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: "&copy; OpenStreetMap contributors", maxZoom: 19,
+}).addTo(map);
+loadMap();
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+flipfinder.db
+flipfinder.db-*
+data/

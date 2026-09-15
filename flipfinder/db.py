@@ -1,0 +1,120 @@
+import json
+import sqlite3
+
+from .config import DB_PATH
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS listings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mls TEXT,
+  source TEXT DEFAULT 'redfin',
+  url TEXT UNIQUE,
+  address TEXT, city TEXT, state TEXT, zip TEXT,
+  price REAL, beds REAL, baths REAL, sqft REAL, lot_sqft REAL,
+  year_built INTEGER, dom INTEGER, ppsf REAL,
+  lat REAL, lng REAL,
+  status TEXT,
+  remarks TEXT,
+  tract TEXT,
+  condition_score REAL,
+  distress_score REAL,
+  distress_signals TEXT,
+  first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+  last_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+  active INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS sold (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  url TEXT UNIQUE,
+  address TEXT, city TEXT, zip TEXT,
+  price REAL, sold_date TEXT,
+  beds REAL, baths REAL, sqft REAL,
+  year_built INTEGER, ppsf REAL,
+  lat REAL, lng REAL,
+  tract TEXT
+);
+
+CREATE TABLE IF NOT EXISTS photos (
+  listing_id INTEGER,
+  url TEXT,
+  PRIMARY KEY (listing_id, url)
+);
+
+CREATE TABLE IF NOT EXISTS area_stats (
+  tract TEXT PRIMARY KEY,
+  median_income REAL,
+  median_home_value REAL,
+  vacancy_rate REAL,
+  sold_count REAL,
+  active_count REAL,
+  median_sold_ppsf REAL,
+  p75_sold_ppsf REAL,
+  std_sold_ppsf REAL,
+  median_dom REAL,
+  updated TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scores (
+  listing_id INTEGER PRIMARY KEY,
+  scorer_version INTEGER,
+  score REAL,
+  raw_score REAL,
+  margin REAL, arv REAL, reno_cost REAL, spread REAL,
+  confidence REAL, liquidity REAL, distress REAL, size_mult REAL,
+  components TEXT,
+  ts TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS labels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  listing_id INTEGER UNIQUE,
+  verdict INTEGER,              -- 0=pass 1=maybe 2=deal
+  tags TEXT,
+  feature_snapshot TEXT,        -- feature vector frozen at rating time
+  algo_score_shown REAL,        -- NULL when rated blind
+  scorer_version INTEGER,
+  split TEXT,                   -- 'train' | 'holdout', assigned at insert
+  ts TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scorer_versions (
+  version INTEGER PRIMARY KEY AUTOINCREMENT,
+  weights TEXT,
+  train_n INTEGER,
+  holdout_spearman REAL,
+  holdout_p20 REAL,
+  promoted INTEGER DEFAULT 0,
+  note TEXT,
+  ts TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sold_tract ON sold(tract);
+CREATE INDEX IF NOT EXISTS idx_listings_tract ON listings(tract);
+"""
+
+
+def connect():
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
+
+
+def init_db():
+    conn = connect()
+    conn.executescript(SCHEMA)
+    conn.commit()
+    return conn
+
+
+def current_weights(conn, cfg):
+    """Latest promoted fitted weights, falling back to config defaults."""
+    row = conn.execute(
+        "SELECT version, weights FROM scorer_versions WHERE promoted=1 "
+        "ORDER BY version DESC LIMIT 1"
+    ).fetchone()
+    if row:
+        return row["version"], json.loads(row["weights"])
+    return 0, dict(cfg["scoring"]["weights"])

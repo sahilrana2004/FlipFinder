@@ -1,0 +1,78 @@
+market:
+  locations:                       # cities or ZIPs; each is pulled separately
+    - "Dallas, TX"
+    - "75080"                      # Richardson
+    - "75078"                      # Prosper
+  max_listings: 350
+  sold_within_days: 180
+
+buy_box:
+  min_price: 30000
+  max_price: 250000
+  min_sqft: 700
+  max_sqft: 2600
+  min_beds: 2
+
+scoring:
+  carry_closing_pct: 0.08          # carry + closing, as fraction of ARV
+  deal_threshold: 0.5              # normalized score above this renders green
+  weights:                         # exponents in the multiplicative score; refit via POST /api/fit
+    margin: 1.0
+    confidence: 0.6
+    liquidity: 0.4
+    distress: 0.8
+  size_sweet_spot:
+    min_sqft: 1100
+    max_sqft: 1800
+    beds: [3, 4]
+    min_baths: 2
+    bonus: 1.15
+
+reno_cost_per_sqft:
+  light: 25
+  medium: 50
+  gut: 90
+
+distress:
+  keywords:
+    - tlc
+    - as-is
+    - as is
+    - fixer
+    - handyman
+    - investor special
+    - cash only
+    - cash buyers
+    - needs work
+    - needs updating
+    - sold as
+    - estate sale
+    - bring your vision
+    - sweat equity
+    - opportunity knocks
+    - great bones
+    - diamond in the rough
+  ppsf_zscore_threshold: -1.0
+  old_year: 1985
+
+fitting:
+  min_train_labels: 20
+  min_holdout_labels: 5
+  holdout_fraction: 0.2
+  max_regression: 0.02             # allowed holdout spearman drop before refusing to promote
+
+ollama:
+  url: "http://localhost:11434"
+  model: "qwen2.5vl:7b"
+  photos_per_listing: 3
+
+census:
+  acs_year: 2023
+
+enrich:
+  max_detail_fetches: 150
+  delay_seconds: 1.0
+
+server:
+  host: "127.0.0.1"
+  port: 8321
