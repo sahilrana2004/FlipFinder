@@ -15,6 +15,8 @@ buy_box:
 
 scoring:
   carry_closing_pct: 0.08          # carry + closing, as fraction of ARV
+  arv_percentile: 0.50             # comp $/sqft percentile; tuned by `py run.py backtest`
+  arv_weighted: true               # weight comps by sqft/age/beds/distance/recency
   deal_threshold: 0.5              # normalized score above this renders green
   weights:                         # exponents in the multiplicative score; refit via POST /api/fit
     margin: 1.0

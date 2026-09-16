@@ -114,7 +114,9 @@ def score_all(conn, cfg, weights=None, version=None):
         components = {**feats, "arv": est["arv"], "reno_cost": est["reno_cost"],
                       "reno_tier": est["reno_tier"], "spread": est["spread"],
                       "comp_count": est["comp_count"],
-                      "comp_p75_ppsf": est["comp_p75_ppsf"]}
+                      "comp_ppsf": est["comp_ppsf"],
+                      "tract_p90_ppsf": est["tract_p90_ppsf"],
+                      "above_tract_p90": est["above_tract_p90"]}
         conn.execute(
             """INSERT OR REPLACE INTO scores
                (listing_id, scorer_version, score, raw_score, margin, arv, reno_cost,

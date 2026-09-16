@@ -38,6 +38,8 @@
   .remarks { font-size: 12.5px; color: var(--muted); background: var(--panel2); border-radius: 8px; padding: 10px; margin: 10px 0; max-height: 130px; overflow-y: auto; }
   .comp { font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
   .comp div { display: flex; justify-content: space-between; padding: 2px 0; }
+  .warn { margin-top: 8px; padding: 7px 9px; border-radius: 6px; font-size: 12px;
+          color: var(--amber); background: rgba(232,178,62,.10); border: 1px solid var(--amber); }
   a.ext { color: var(--accent); font-size: 12px; text-decoration: none; }
 
   /* Label widget */
@@ -200,6 +202,7 @@ async function openPanel(id) {
       <div><span>Liquidity</span><b>${c.liquidity.toFixed(2)}</b></div>
       <div><span>Distress</span><b>${(c.distress ?? 0).toFixed(2)}</b></div>
     </div>` : ""}
+    ${!blind && c.above_tract_p90 ? `<div class="warn">ARV $/sqft is above the 90th percentile of everything sold in this tract — likely a comp mismatch, verify before trusting the spread.</div>` : ""}
     <div id="pw"></div>`;
   p.querySelector("#pw").appendChild(labelWidget(l, () => { openPanel(id); loadMap(); }));
 }
@@ -231,6 +234,7 @@ async function loadTriage() {
           ${!blind ? `<span>Algo score</span><b>${l.score?.toFixed(2) ?? "—"}</b>
                       <span>Margin</span><b>${pct(c.margin)}</b>` : ""}
         </div>
+        ${!blind && c.above_tract_p90 ? `<div class="warn">ARV $/sqft is above the 90th percentile for this tract — likely a comp mismatch.</div>` : ""}
         ${l.remarks ? `<div class="remarks">${l.remarks}</div>` : ""}
         <div id="tw"></div>
       </div>
