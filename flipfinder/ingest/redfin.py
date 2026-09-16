@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import re
+from datetime import datetime
 
 import requests
 
@@ -138,11 +139,34 @@ def upsert_active_rows(conn, rows):
     return n
 
 
+def _parse_sold_date(raw):
+    """Redfin sold dates come as 'April-15-2026'; store ISO so SQL date
+    comparisons (used by the point-in-time ARV backtest) work directly."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%B-%d-%Y").date().isoformat()
+    except ValueError:
+        return None
+
+
 def upsert_sold_rows(conn, rows):
-    n = 0
+    """gis-csv sold_within_days returns active listings and closed sales mixed
+    together (actives fill the 350-row cap first), so anything not an actual
+    closed sale must be dropped here rather than trusted from the endpoint."""
+    kept = skipped = 0
     for row in rows:
         d = _parse_common(row)
         if not d["url"] or not d["price"]:
+            skipped += 1
+            continue
+        if d["status"].strip().lower() != "sold":
+            skipped += 1
+            continue
+        sold_date = _parse_sold_date(d["sold_date"])
+        if not sold_date:
+            skipped += 1
             continue
         conn.execute(
             """INSERT INTO sold
@@ -151,13 +175,13 @@ def upsert_sold_rows(conn, rows):
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(url) DO UPDATE SET
                  price=excluded.price, sold_date=excluded.sold_date""",
-            (d["url"], d["address"], d["city"], d["zip"], d["price"], d["sold_date"],
+            (d["url"], d["address"], d["city"], d["zip"], d["price"], sold_date,
              d["beds"], d["baths"], d["sqft"], d["year_built"], d["ppsf"],
              d["lat"], d["lng"]),
         )
-        n += 1
+        kept += 1
     conn.commit()
-    return n
+    return kept, skipped
 
 
 def ingest_listings(conn, cfg):

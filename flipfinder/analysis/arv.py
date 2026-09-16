@@ -1,5 +1,7 @@
 """ARV estimation from sold comps + renovation cost heuristic."""
 import math
+import re
+from datetime import date
 
 import numpy as np
 
@@ -20,33 +22,137 @@ def _haversine_miles(lat1, lng1, lat2, lng2):
 # so the unit designator in the address is the only signal available here.
 ATTACHED_SOLD = "AND address NOT LIKE '% unit %' AND address NOT LIKE '% apt %'"
 
+COMP_FIELDS = "ppsf, lat, lng, url, address, sold_date, sqft, year_built, beds"
 
-def _comps(conn, listing):
+
+def _normalize_address(addr):
+    return re.sub(r"\s+", " ", (addr or "").strip().lower())
+
+
+def _exclude_self(rows, exclude_url, exclude_addr):
+    """Drop the target's own sale (and any comp at the same address) from a
+    comp set — needed so the backtest doesn't score a sale against itself."""
+    if not exclude_url:
+        return rows
+    return [
+        r for r in rows
+        if r["url"] != exclude_url and _normalize_address(r["address"]) != exclude_addr
+    ]
+
+
+def comp_rows(conn, listing, as_of=None, exclude_url=None):
+    """Full comp rows — the backtest needs url/address/sold_date for its leakage
+    self-check, and comp weighting needs sqft/year_built/beds."""
     sqft = listing["sqft"]
     lo, hi = sqft * 0.75, sqft * 1.25
+    date_sql, date_params = "", []
+    if as_of:
+        date_sql = " AND sold_date IS NOT NULL AND sold_date < ?"
+        date_params = [as_of]
+    exclude_addr = _normalize_address(listing["address"]) if exclude_url else None
+
     rows = []
     if listing["tract"]:
         rows = conn.execute(
-            "SELECT ppsf, lat, lng FROM sold "
-            f"WHERE tract=? AND ppsf IS NOT NULL AND sqft BETWEEN ? AND ? {ATTACHED_SOLD}",
-            (listing["tract"], lo, hi),
+            f"SELECT {COMP_FIELDS} FROM sold "
+            f"WHERE tract=? AND ppsf IS NOT NULL AND sqft BETWEEN ? AND ? {ATTACHED_SOLD}{date_sql}",
+            (listing["tract"], lo, hi, *date_params),
         ).fetchall()
+        rows = _exclude_self(rows, exclude_url, exclude_addr)
     if len(rows) < 3 and listing["lat"] and listing["lng"]:
         dlat = MILES_1_5_LAT
         dlng = MILES_1_5_LAT / max(0.2, math.cos(math.radians(listing["lat"])))
         cands = conn.execute(
-            "SELECT ppsf, lat, lng FROM sold "
+            f"SELECT {COMP_FIELDS} FROM sold "
             "WHERE ppsf IS NOT NULL AND sqft BETWEEN ? AND ? "
-            f"AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? {ATTACHED_SOLD}",
+            f"AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? {ATTACHED_SOLD}{date_sql}",
             (lo, hi, listing["lat"] - dlat, listing["lat"] + dlat,
-             listing["lng"] - dlng, listing["lng"] + dlng),
+             listing["lng"] - dlng, listing["lng"] + dlng, *date_params),
         ).fetchall()
+        cands = _exclude_self(cands, exclude_url, exclude_addr)
         rows = [
             c for c in cands
             if c["lat"] and c["lng"]
             and _haversine_miles(listing["lat"], listing["lng"], c["lat"], c["lng"]) <= 1.5
         ]
-    return [r["ppsf"] for r in rows]
+    return rows
+
+
+def _comps(conn, listing, as_of=None, exclude_url=None):
+    return [r["ppsf"] for r in comp_rows(conn, listing, as_of=as_of, exclude_url=exclude_url)]
+
+
+def _days_between(iso_a, iso_b):
+    try:
+        a = date.fromisoformat(iso_a)
+        b = date.fromisoformat(iso_b)
+    except (TypeError, ValueError):
+        return None
+    return abs((b - a).days)
+
+
+def comp_weights(listing, rows, as_of=None):
+    """Similarity weights: sqft+tract alone can't separate a gut job from retail,
+    which is what drives the sub-$250k overprediction. Age, bed count, distance
+    and sale recency all narrow the comp set toward genuinely like properties."""
+    newest = max((r["sold_date"] for r in rows if r["sold_date"]), default=None)
+    ref_date = as_of or newest
+    weights = []
+    for r in rows:
+        w = 1.0
+        if listing["sqft"] and r["sqft"]:
+            ratio = r["sqft"] / listing["sqft"]
+            w *= math.exp(-(((ratio - 1.0) / 0.15) ** 2) / 2)
+        if listing["year_built"] and r["year_built"]:
+            dy = abs(r["year_built"] - listing["year_built"])
+            w *= math.exp(-((dy / 20.0) ** 2) / 2)
+        if listing["beds"] and r["beds"]:
+            db = abs(r["beds"] - listing["beds"])
+            w *= 1.0 if db < 0.5 else (0.7 if db < 1.5 else 0.5)
+        if listing["lat"] and listing["lng"] and r["lat"] and r["lng"]:
+            d = _haversine_miles(listing["lat"], listing["lng"], r["lat"], r["lng"])
+            w *= 1.0 / (1.0 + (d / 0.5) ** 2)
+        if ref_date and r["sold_date"]:
+            days = _days_between(r["sold_date"], ref_date)
+            if days is not None:
+                w *= 0.5 ** (days / 365.0)
+        weights.append(max(w, 1e-9))
+    return weights
+
+
+def weighted_percentile(values, weights, q):
+    order = np.argsort(values)
+    v = np.asarray(values, dtype=float)[order]
+    w = np.asarray(weights, dtype=float)[order]
+    cum = np.cumsum(w)
+    if cum[-1] <= 0:
+        return float(np.percentile(v, q * 100))
+    cutoff = q * cum[-1]
+    return float(v[int(np.searchsorted(cum, cutoff))])
+
+
+def comp_ppsf(listing, rows, percentile, weighted, as_of=None):
+    ppsfs = [r["ppsf"] for r in rows]
+    if not ppsfs:
+        return None
+    if not weighted:
+        return float(np.percentile(np.array(ppsfs), percentile * 100))
+    return weighted_percentile(ppsfs, comp_weights(listing, rows, as_of=as_of), percentile)
+
+
+def tract_ppsf_p90(conn, tract):
+    """Guard rail: an ARV implying a $/sqft above almost everything the tract has
+    ever sold for is a comp-matching failure, not a find."""
+    if not tract:
+        return None
+    vals = [
+        r["ppsf"] for r in conn.execute(
+            "SELECT ppsf FROM sold WHERE tract=? AND ppsf IS NOT NULL", (tract,)
+        )
+    ]
+    if len(vals) < 5:
+        return None
+    return float(np.percentile(np.array(vals), 90))
 
 
 def _reno_tier(listing):
@@ -61,20 +167,26 @@ def _reno_tier(listing):
     return "medium" if distress >= 0.5 else "light"
 
 
-def estimate(conn, cfg, listing):
-    ppsfs = _comps(conn, listing)
-    n = len(ppsfs)
+def estimate(conn, cfg, listing, as_of=None, exclude_url=None):
+    rows = comp_rows(conn, listing, as_of=as_of, exclude_url=exclude_url)
+    n = len(rows)
     if n == 0:
         return None
+    s = cfg["scoring"]
+    ppsf = comp_ppsf(listing, rows, s["arv_percentile"], s["arv_weighted"], as_of=as_of)
+    arv = ppsf * listing["sqft"]
+
+    ppsfs = [r["ppsf"] for r in rows]
     arr = np.array(ppsfs)
-    p75 = float(np.percentile(arr, 75))
-    arv = p75 * listing["sqft"]
     cv = float(np.std(arr) / np.mean(arr)) if n >= 2 else 0.35
     confidence = min(1.0, n / 5.0) * max(0.0, 1.0 - cv / 0.35)
 
+    p90 = tract_ppsf_p90(conn, listing["tract"])
+    above_tract_p90 = bool(p90 and ppsf > p90)
+
     tier = _reno_tier(listing)
     reno_cost = cfg["reno_cost_per_sqft"][tier] * listing["sqft"]
-    carry = cfg["scoring"]["carry_closing_pct"] * arv
+    carry = s["carry_closing_pct"] * arv
     spread = arv - listing["price"] - reno_cost - carry
     return {
         "arv": arv,
@@ -84,5 +196,7 @@ def estimate(conn, cfg, listing):
         "margin": spread / arv,
         "confidence": confidence,
         "comp_count": n,
-        "comp_p75_ppsf": p75,
+        "comp_ppsf": ppsf,
+        "tract_p90_ppsf": p90,
+        "above_tract_p90": above_tract_p90,
     }

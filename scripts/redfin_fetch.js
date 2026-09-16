@@ -4,10 +4,22 @@
 // and run: py run.py import
 //
 // LOCATIONS accepts cities and ZIPs; keep it in sync with config.yaml market.locations.
+//
+// SOLD_ZIPS drives a separate sold-only pull: gis-csv's sold_within_days mixes
+// actives into the same 350-row cap as sales, and actives fill it first, so a
+// city-wide sold pull mostly returns actives. Querying one ZIP at a time keeps
+// each region small enough that sales aren't crowded out. Rebuild this list from
+// the unique ZIPs of active listings priced $30,000-$250,000 (plus any ZIP you
+// want sold comps for even without current actives there).
 (async () => {
   const LOCATIONS = ['Dallas, TX', '75080', '75078'];
+  const SOLD_ZIPS = [
+    '75043', '75078', '75080', '75150', '75180', '75208', '75210', '75211',
+    '75215', '75216', '75217', '75227', '75228', '75232', '75235', '75238',
+    '75241', '75249', '75254',
+  ];
   const NUM_HOMES = 350;
-  const SOLD_WITHIN_DAYS = 180;
+  const SOLD_WITHIN_DAYS_ZIP = 365;
   const ENRICH_LIMIT = 60;          // detail pages to scrape for remarks + photos
   const PRICE = [30000, 250000];    // buy box, keeps enrichment focused
   const SQFT = [700, 2600];
@@ -47,10 +59,8 @@
     const base = `/stingray/api/gis-csv?al=1&region_id=${region.id}` +
       `&region_type=${region.type}&uipt=1&sf=1,2,3,5,6,7&num_homes=${NUM_HOMES}&status=9&v=8`;
     const activeCsv = await (await fetch(base)).text();
-    const soldCsv = await (await fetch(base + '&sold_within_days=' + SOLD_WITHIN_DAYS)).text();
     save(`active${n}.csv`, activeCsv);
-    save(`sold${n}.csv`, soldCsv);
-    console.log('  rows:', activeCsv.split('\n').length, soldCsv.split('\n').length);
+    console.log('  rows:', activeCsv.split('\n').length);
 
     // pick buy-box rows out of the active CSV to scrape detail pages for
     const lines = activeCsv.split('\n');
@@ -67,6 +77,26 @@
       }
     }
   }
+
+  // run.py import globs sold*.csv, so sold_zip_<zip>.csv is picked up automatically.
+  for (const zip of SOLD_ZIPS) {
+    const region = await lookup(zip);
+    const url = `/stingray/api/gis-csv?al=1&region_id=${region.id}` +
+      `&region_type=${region.type}&uipt=1&sf=1,2,3,5,6,7&num_homes=${NUM_HOMES}` +
+      `&status=9&v=8&sold_within_days=${SOLD_WITHIN_DAYS_ZIP}`;
+    const csvText = await (await fetch(url)).text();
+    // Save the raw CSV: `py run.py import` filters to closed sales with a real CSV
+    // parser. Splitting on commas here would misread quoted fields and drop sales.
+    save(`sold_zip_${zip}.csv`, csvText);
+    // Count listing rows by their property URL: the header and Redfin's quoted MLS
+    // disclaimer row would otherwise push a capped response to 351 and hide truncation.
+    const rowsReturned = (csvText.match(/https:\/\/www\.redfin\.com\/[A-Z]{2}\//g) || []).length;
+    const sales = (csvText.match(/,Sold,/g) || []).length;
+    const truncated = rowsReturned >= NUM_HOMES ? ' TRUNCATED (sales may be missing)' : '';
+    console.log(`${zip} / ${rowsReturned} rows returned / ${sales} sales${truncated}`);
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
   targets.sort((a, b) => a.price - b.price);
   const urls = targets.slice(0, ENRICH_LIMIT).map(t => t.url);
   console.log('enriching', urls.length, 'listings...');
@@ -96,5 +126,5 @@
     await new Promise(r => setTimeout(r, 400));
   }
   save('enrich.json', JSON.stringify(out));
-  console.log('done — move active.csv, sold.csv, enrich.json into FlipFinder/data');
+  console.log('done — move active*.csv, sold_zip_*.csv, enrich.json into FlipFinder/data');
 })();

@@ -1,7 +1,7 @@
 import argparse
 import json
 
-from flipfinder.analysis import distress, fitter, photos, scorer
+from flipfinder.analysis import backtest, distress, fitter, photos, scorer
 from flipfinder.config import load_config
 from flipfinder.db import init_db
 from flipfinder.ingest import census, redfin, redfin_detail
@@ -22,8 +22,8 @@ def cmd_ingest(conn, cfg):
         for name, n in redfin.ingest_listings(conn, cfg):
             print(f"[ingest] {n} active listings for {name}")
         days = cfg["market"]["sold_within_days"]
-        for name, n in redfin.ingest_solds(conn, cfg):
-            print(f"[ingest] {n} solds ({days}d) for {name}")
+        for name, (kept, skipped) in redfin.ingest_solds(conn, cfg):
+            print(f"[ingest] {kept} solds ({days}d, {skipped} skipped) for {name}")
     except requests.HTTPError as e:
         print(f"[ingest] {e}\n{BROWSER_HINT}")
         raise SystemExit(1)
@@ -46,7 +46,12 @@ def cmd_import(conn, _cfg):
         for p in paths:
             with open(p, encoding="utf-8-sig", newline="") as f:
                 rows = list(csv.DictReader(f))
-            print(f"[import] {p.name}: {fn(conn, rows)} rows")
+            result = fn(conn, rows)
+            if pattern == "sold*.csv":
+                kept, skipped = result
+                print(f"[import] {p.name}: {kept} kept, {skipped} skipped")
+            else:
+                print(f"[import] {p.name}: {result} rows")
 
     p = data / "enrich.json"
     if not p.exists():
@@ -101,6 +106,15 @@ def cmd_fit(conn, cfg):
     print(json.dumps(fitter.run(conn, cfg), indent=2))
 
 
+def cmd_backtest(conn, cfg):
+    result = backtest.run(conn, cfg)
+    print(f"[backtest] {result['n_targets']} targets "
+          f"({result['n_tune']} tune / {result['n_test']} test)")
+    print(f"[backtest] leakage check: {result['leakage_checked']} checked, "
+          f"{result['leakage_violations']} violations")
+    print("[backtest] wrote data/backtest/{metrics.json,errors.csv,summary.txt}")
+
+
 def cmd_serve(_conn, cfg):
     import uvicorn
 
@@ -115,6 +129,7 @@ COMMANDS = {
     "census": cmd_census,
     "score": cmd_score,
     "fit": cmd_fit,
+    "backtest": cmd_backtest,
     "serve": cmd_serve,
 }
 
