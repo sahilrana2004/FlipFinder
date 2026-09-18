@@ -1,403 +1,2025 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
 <title>FlipFinder</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236ee7b7'/%3E%3Cstop offset='1' stop-color='%2360a5fa'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='28' height='28' rx='8' fill='url(%23g)'/%3E%3Cpath d='M7.5 14.5 14 9l6.5 5.5M10 13.2v6.3h8v-6.3' fill='none' stroke='%2306110d' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://tiles.stadiamaps.com">
+<link rel="preconnect" href="https://ssl.cdn-redfin.com">
+<script>
+  // Runs before first paint: settle the theme (no flash), and start the listings
+  // request now so it downloads in parallel with Leaflet instead of after it.
+  (() => {
+    let t = null;
+    try { t = localStorage.getItem("ff_theme"); } catch (e) {}
+    if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    document.documentElement.dataset.theme = t;
+  })();
+  window.ffListings = fetch("/api/listings").then(r => r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)));
+  window.ffListings.catch(() => {});
+</script>
 <style>
-  :root {
-    --bg: #0f1216; --panel: #171c22; --panel2: #1e252d; --border: #2a333d;
-    --text: #dde4ea; --muted: #8a97a3; --green: #3ecf6e; --amber: #e8b23e;
-    --red: #e05555; --accent: #4da3ff;
-    --v-deal: #3ecf6e; --v-maybe: #e8b23e; --v-pass: #a35a5a; --v-none: #5b6570;
-  }
-  * { box-sizing: border-box; margin: 0; }
-  body { background: var(--bg); color: var(--text); font: 14px/1.45 'Segoe UI', system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
-  header h1 { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
-  nav button { background: none; border: none; color: var(--muted); font: inherit; padding: 6px 12px; cursor: pointer; border-radius: 6px; }
-  nav button.on { background: var(--panel2); color: var(--text); }
-  #stat { margin-left: auto; color: var(--muted); font-size: 12px; }
-  main { flex: 1; position: relative; overflow: hidden; }
-  .view { position: absolute; inset: 0; display: none; }
-  .view.on { display: flex; }
+/* ---------- tokens ---------- */
+:root {
+  color-scheme: dark;
+  --font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --mono: "Cascadia Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
 
-  /* Map */
-  #mapcol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  #map { flex: 1; background: #0b0d10; }
-  #mapbar { display: flex; align-items: center; gap: 14px; padding: 7px 12px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); flex-wrap: wrap; }
-  #mapbar .seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-  #mapbar .seg button { background: none; border: none; color: var(--muted); font: inherit; padding: 4px 10px; cursor: pointer; }
-  #mapbar .seg button.on { background: var(--panel2); color: var(--text); }
-  .legend { display: flex; gap: 12px; margin-left: auto; }
-  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
-  .ai .ai-verdict { margin-bottom: 6px; }
-  .leaflet-tile { filter: invert(1) hue-rotate(180deg) brightness(0.75) contrast(0.9) saturate(0.4); }
-  #panel { width: 380px; background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; padding: 16px; display: none; }
-  #panel.open { display: block; }
-  .addr { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
-  .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 10px 0; font-size: 13px; }
-  .grid b { color: var(--text); font-weight: 600; }
-  .grid span { color: var(--muted); }
-  .scorebar { height: 8px; border-radius: 4px; background: var(--panel2); margin: 6px 0 14px; overflow: hidden; }
-  .scorebar i { display: block; height: 100%; background: linear-gradient(90deg, var(--red), var(--amber), var(--green)); }
-  .remarks { font-size: 12.5px; color: var(--muted); background: var(--panel2); border-radius: 8px; padding: 10px; margin: 10px 0; max-height: 130px; overflow-y: auto; }
-  .comp { font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
-  .comp div { display: flex; justify-content: space-between; padding: 2px 0; }
-  .warn { margin-top: 8px; padding: 7px 9px; border-radius: 6px; font-size: 12px;
-          color: var(--amber); background: rgba(232,178,62,.10); border: 1px solid var(--amber); }
-  a.ext { color: var(--accent); font-size: 12px; text-decoration: none; }
-  .ai { margin: 10px 0; padding: 10px; border-radius: 8px; border: 1px dashed var(--border); font-size: 12.5px; }
-  .ai .ai-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
-  .ai .ai-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
-  .ai ul { margin: 4px 0 0 18px; padding: 0; color: var(--muted); }
-  .ai .ai-notes { color: var(--muted); margin-top: 6px; font-style: italic; }
-  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
-  .chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--red); color: var(--red); }
-  .cond { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12.5px; color: var(--muted); }
-  .cond select { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font: inherit; }
+  --bg: #0a0c10;
+  --map-bg: #333333;
+  --ink: #eef2f7;
+  --ink-2: #a7b0bd;
+  --ink-3: #7d8796;
+  --line: rgba(255, 255, 255, .08);
+  --line-2: rgba(255, 255, 255, .14);
+  --wash: rgba(255, 255, 255, .045);
+  --wash-2: rgba(255, 255, 255, .085);
+  --field: rgba(255, 255, 255, .06);
+  --accent: #7cc4ff;
+  --seq: #3987e5;
 
-  /* Label widget */
-  .verdicts { display: flex; gap: 8px; margin: 12px 0 8px; }
-  .verdicts button { flex: 1; padding: 10px 0; border-radius: 8px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
-  .verdicts button:hover { border-color: var(--muted); }
-  .v-pass.picked { background: #3a2326; border-color: var(--red); }
-  .v-maybe.picked { background: #3a3323; border-color: var(--amber); }
-  .v-deal.picked { background: #1f3a29; border-color: var(--green); }
-  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-  .tags button { font-size: 11.5px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; }
-  .tags button.picked { border-color: var(--accent); color: var(--accent); }
+  /* Verdicts are status colors: validated for colorblind separation (protan/deutan
+     dE 12.2 all-pairs) and >= 3:1 on the dark surface; pins also differ in size. */
+  --deal: #54c398;
+  --maybe: #f09c17;
+  --pass: #c95368;
+  --none: #7d8796;
+  --ring: #0a0c10;
+  --cost-1: #7d8796;
+  --cost-2: #5b6573;
+  --cost-3: #434b57;
 
-  /* Triage */
-  #triage { flex-direction: column; align-items: center; overflow-y: auto; padding: 24px; }
-  .card { width: 560px; max-width: 100%; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
-  .card img { width: 100%; height: 300px; object-fit: cover; background: var(--panel2); display: block; }
-  .card .body { padding: 16px; }
-  .tbar { width: 560px; max-width: 100%; display: flex; align-items: center; gap: 12px; margin-bottom: 12px; color: var(--muted); font-size: 12px; }
-  .tbar label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-  .keyhint { margin-left: auto; }
-  kbd { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+  --glass: rgba(17, 20, 27, .62);
+  --glass-strong: rgba(14, 16, 22, .82);
+  --glass-solid: #14171d;
+  --blur: 22px;
+  --sat: 170%;
+  --rim: rgba(255, 255, 255, .22);
+  --rim-soft: rgba(255, 255, 255, .05);
+  --bevel-hi: rgba(255, 255, 255, .075);
+  --bevel-lo: rgba(0, 0, 0, .45);
+  --spec: rgba(255, 255, 255, .055);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 20px 50px -20px rgba(0, 0, 0, .8);
+  --lens: rgba(255, 255, 255, .14);
+  --lens-shadow: inset 0 1px 0 rgba(255, 255, 255, .24), inset 0 -1px 0 rgba(0, 0, 0, .3), 0 1px 4px rgba(0, 0, 0, .4);
+  --scrim: rgba(8, 10, 14, .82);
+  --on-photo: rgba(10, 12, 16, .55);
 
-  /* Metrics */
-  #metrics { flex-direction: column; overflow-y: auto; padding: 24px; gap: 16px; align-items: flex-start; }
-  .tiles { display: flex; gap: 12px; flex-wrap: wrap; }
-  .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 20px; min-width: 150px; }
-  .tile .big { font-size: 26px; font-weight: 700; }
-  .tile .lbl { color: var(--muted); font-size: 12px; }
-  .box { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; width: 100%; max-width: 760px; }
-  .box h3 { font-size: 13px; margin-bottom: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  .box table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  .box td, .box th { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--border); }
-  .box th { color: var(--muted); font-weight: 500; }
-  #fitbtn { background: var(--accent); border: none; color: #06121f; font: inherit; font-weight: 600; padding: 9px 18px; border-radius: 8px; cursor: pointer; }
-  #fitout { white-space: pre-wrap; font-family: Consolas, monospace; font-size: 12px; color: var(--muted); margin-top: 10px; }
-  .empty { color: var(--muted); padding: 40px; text-align: center; width: 100%; }
+  --r-panel: 22px;
+  --r-card: 16px;
+  --gap: 12px;
+  --top: 76px;
+  --list-w: 380px;
+  --detail-w: 440px;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --spring: cubic-bezier(.3, 1.28, .5, 1);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #e8ecf1;
+  --map-bg: #f2f3f0;
+  --ink: #101318;
+  --ink-2: #4f5866;
+  --ink-3: #5f6875;
+  --line: rgba(16, 19, 24, .08);
+  --line-2: rgba(16, 19, 24, .15);
+  --wash: rgba(16, 19, 24, .04);
+  --wash-2: rgba(16, 19, 24, .075);
+  --field: rgba(16, 19, 24, .05);
+  --accent: #1f6fd1;
+  --seq: #2a78d6;
+  --deal: #19966e;
+  --maybe: #c8800d;
+  --pass: #b32035;
+  --none: #8a93a0;
+  --ring: #ffffff;
+  --cost-1: #8f98a5;
+  --cost-2: #b3bac4;
+  --cost-3: #d0d5dc;
+  --glass: rgba(255, 255, 255, .64);
+  --glass-strong: rgba(255, 255, 255, .86);
+  --glass-solid: #f6f7f9;
+  --sat: 185%;
+  --rim: rgba(255, 255, 255, .95);
+  --rim-soft: rgba(255, 255, 255, .4);
+  --bevel-hi: rgba(255, 255, 255, .9);
+  --bevel-lo: rgba(16, 19, 24, .06);
+  --spec: rgba(255, 255, 255, .6);
+  --shadow: 0 0 0 1px rgba(16, 19, 24, .07), 0 1px 2px rgba(16, 19, 24, .06), 0 20px 50px -22px rgba(16, 19, 24, .32);
+  --lens: #ffffff;
+  --lens-shadow: 0 0 0 .5px rgba(16, 19, 24, .1), 0 1px 3px rgba(16, 19, 24, .16), inset 0 1px 0 #fff;
+  --scrim: rgba(232, 236, 241, .84);
+  --on-photo: rgba(255, 255, 255, .72);
+}
+
+/* ---------- base ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.45 var(--font); letter-spacing: -.003em;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  overflow: hidden; overscroll-behavior: none;
+}
+h1, h2, h3, p, dl, dd, figure, ul { margin: 0; }
+ul { padding: 0; list-style: none; }
+button, input, select { font: inherit; color: inherit; letter-spacing: inherit; }
+button { cursor: pointer; }
+a { color: inherit; }
+code { font: 12px var(--mono); padding: 1px 5px; border-radius: 6px; background: var(--field); }
+kbd {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
+  font: 600 10.5px/1 var(--font); color: var(--ink-2);
+  border-radius: 5px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line), inset 0 -1px 0 var(--line);
+}
+.num { font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+::selection { background: color-mix(in oklab, var(--accent) 35%, transparent); }
+* { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+
+.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.i.fill { fill: currentColor; stroke: none; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--none)); flex: none; }
+.dot.ring { background: transparent; box-shadow: inset 0 0 0 2px var(--ink); }
+.v-deal { --c: var(--deal); }
+.v-maybe { --c: var(--maybe); }
+.v-pass { --c: var(--pass); }
+.v-none { --c: var(--none); }
+
+/* ---------- liquid glass ----------
+   Three cheap layers instead of a WebGL refraction pass: backdrop blur + saturation
+   for the material, a gradient hairline rim lit from the top-left, and an inner bevel.
+   All static, so panning the map only re-blurs; nothing re-rasterizes. */
+.glass {
+  position: relative; isolation: isolate;
+  background: radial-gradient(130% 70% at 0% 0%, var(--spec), transparent 55%), var(--glass);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--sat));
+  backdrop-filter: blur(var(--blur)) saturate(var(--sat));
+  box-shadow: var(--shadow);
+}
+.glass.strong { background: radial-gradient(130% 70% at 0% 0%, var(--spec), transparent 55%), var(--glass-strong); }
+.glass::before, .glass::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 3; }
+.glass::before {
+  padding: 1px;
+  background: linear-gradient(150deg, var(--rim), var(--rim-soft) 30%, transparent 52%, var(--rim-soft) 78%, var(--rim));
+  -webkit-mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+.glass::after { box-shadow: inset 0 1px 0 var(--bevel-hi), inset 0 -1px 0 var(--bevel-lo); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass, .glass.strong { background: var(--glass-solid); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass, .glass.strong { background: var(--glass-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
+/* ---------- controls ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 34px; padding: 0 13px; border: 0; border-radius: 11px;
+  background: var(--field); box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--ink); font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap;
+  transition: background-color .15s, box-shadow .15s, transform .12s var(--ease), opacity .15s;
+}
+.btn:hover { background: var(--wash-2); }
+.btn:active { transform: scale(.97); }
+.btn:disabled { opacity: .55; cursor: default; transform: none; }
+.btn .i { width: 15px; height: 15px; }
+.btn-sm { height: 30px; padding: 0 11px; border-radius: 10px; font-size: 12.5px; }
+.btn-primary { background: var(--ink); color: var(--bg); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+.btn-primary:hover { background: color-mix(in oklab, var(--ink) 88%, var(--bg)); }
+.icon-btn {
+  display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 11px;
+  background: transparent; color: var(--ink-2); transition: background-color .15s, color .15s, transform .12s var(--ease);
+}
+.icon-btn:hover { background: var(--wash-2); color: var(--ink); }
+.icon-btn:active { transform: scale(.94); }
+.icon-btn .i { width: 17px; height: 17px; }
+.link-btn { justify-self: start; border: 0; padding: 0; background: none; color: var(--accent); font-size: 12.5px; font-weight: 600; }
+.is-busy { position: relative; color: transparent !important; pointer-events: none; }
+.is-busy::after {
+  content: ""; position: absolute; inset: 0; margin: auto; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--ink-3); border-top-color: var(--ink); animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(1turn); } }
+
+/* Segmented control whose selection is a sliding glass lens. */
+.seg {
+  position: relative; isolation: isolate; display: inline-grid; grid-auto-flow: column; align-items: center;
+  padding: 3px; border-radius: 999px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line);
+}
+.seg > :not(.lens) {
+  position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 30px; padding: 0 14px; border: 0; border-radius: 999px; background: none;
+  color: var(--ink-2); font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap;
+  transition: color .2s;
+}
+.seg > :not(.lens):hover { color: var(--ink); }
+.seg > [aria-current="page"], .seg > [aria-checked="true"] { color: var(--ink); }
+.seg .lens {
+  position: absolute; z-index: 0; top: 3px; bottom: 3px; left: 0; width: var(--w, 0);
+  transform: translateX(var(--x, 0)); border-radius: 999px; background: var(--lens); box-shadow: var(--lens-shadow);
+  opacity: 0; transition: transform .42s var(--spring), width .42s var(--spring), opacity .2s;
+}
+.seg .lens.instant { transition: none; }
+.seg-sm > :not(.lens) { height: 28px; padding: 0 11px; font-size: 12.5px; gap: 5px; }
+.seg .count { color: var(--ink-3); font-weight: 600; }
+.seg [aria-checked="true"] .count { color: var(--ink-2); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px 0 7px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 650; white-space: nowrap; color: var(--ink);
+  background: color-mix(in oklab, var(--c, var(--none)) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--c, var(--none)) 38%, transparent);
+}
+.chip > i { width: 7px; height: 7px; border-radius: 50%; background: var(--c, var(--none)); }
+.chip.v-none { color: var(--ink-2); }
+.chip.ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); color: var(--ink-2); padding: 0 8px; }
+.chip.ghost .i { width: 13px; height: 13px; }
+.chip.lg { height: 26px; padding: 0 10px 0 9px; font-size: 12.5px; }
+.chip.lg > i { width: 8px; height: 8px; }
+
+.warn {
+  display: flex; gap: 9px; align-items: flex-start; padding: 10px 12px; border-radius: 12px;
+  font-size: 12.5px; line-height: 1.45; color: var(--ink);
+  background: color-mix(in oklab, var(--maybe) 11%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--maybe) 36%, transparent);
+}
+.warn .i { color: var(--maybe); margin-top: 1px; }
+
+.empty { display: grid; justify-items: center; gap: 10px; padding: 48px 24px; text-align: center; }
+.empty .e-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-2); }
+.empty .e-icon .i { width: 20px; height: 20px; }
+.empty h3 { font: 600 15px/1.3 var(--font-display); }
+.empty p { max-width: 36ch; color: var(--ink-2); font-size: 13px; }
+.empty .btn { margin-top: 4px; }
+
+/* ---------- shell ---------- */
+body { --li: calc(var(--list-w) + var(--gap)); --ri: 0px; }
+body.list-collapsed { --li: 0px; }
+body.detail-open { --ri: calc(var(--detail-w) + var(--gap)); }
+
+#map { position: fixed; inset: 0; z-index: 0; background: var(--map-bg); }
+#map::after {
+  content: ""; position: absolute; inset: 0; z-index: 1000; pointer-events: none;
+  background: var(--scrim); opacity: 0; transition: opacity .35s var(--ease);
+}
+body:not([data-view="map"]) #map::after { opacity: 1; }
+#map.map-failed::before {
+  content: "Map unavailable. The list still works."; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%); color: var(--ink-3); font-size: 13px;
+}
+
+.topbar {
+  position: fixed; z-index: 30; top: var(--gap); left: var(--gap); right: var(--gap); height: 52px;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px;
+  padding: 0 8px 0 12px; border-radius: 18px;
+}
+.tb-start, .tb-end { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tb-end { justify-content: flex-end; }
+.brand { display: flex; align-items: center; gap: 10px; margin-right: 4px; text-decoration: none; border-radius: 10px; }
+.brand svg { width: 28px; height: 28px; flex: none; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .25)); }
+.brand-name { font: 650 15.5px/1 var(--font-display); letter-spacing: -.015em; }
+.summary { display: flex; align-items: center; gap: 14px; margin-right: 8px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+.summary span { display: inline-flex; align-items: center; gap: 6px; }
+.summary b { color: var(--ink); font-weight: 650; }
+body:not([data-view="map"]) .map-only { visibility: hidden; }
+
+.map-ui { transition: opacity .25s var(--ease), visibility 0s linear 0s; }
+body:not([data-view="map"]) .map-ui { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .2s var(--ease), visibility 0s linear .2s; }
+
+.panel {
+  position: fixed; z-index: 10; top: var(--top); bottom: var(--gap);
+  display: flex; flex-direction: column; overflow: hidden; border-radius: var(--r-panel);
+}
+
+/* ---------- list panel ---------- */
+#listPanel { left: var(--gap); width: var(--list-w); transition: transform .34s var(--ease), opacity .25s var(--ease), visibility 0s; }
+body.list-collapsed #listPanel { transform: translateX(calc(-100% - 2 * var(--gap))); opacity: 0; visibility: hidden; transition: transform .34s var(--ease), opacity .25s var(--ease), visibility 0s linear .34s; }
+.lp-head { display: grid; gap: 10px; padding: 14px 14px 10px; border-bottom: 1px solid var(--line); }
+.lp-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lp-title h1 { font: 650 17px/1.2 var(--font-display); letter-spacing: -.015em; }
+.select { position: relative; display: inline-flex; align-items: center; }
+.select select {
+  appearance: none; height: 30px; padding: 0 28px 0 11px; border: 0; border-radius: 10px;
+  background: var(--field); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-2); font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.select select:hover { color: var(--ink); }
+.select option { background: var(--glass-solid); color: var(--ink); }
+.select .i { position: absolute; right: 8px; width: 14px; height: 14px; pointer-events: none; color: var(--ink-3); }
+.search {
+  display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 8px 0 11px; border-radius: 12px;
+  background: var(--field); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-3); cursor: text;
+  transition: box-shadow .15s;
+}
+.search:focus-within { box-shadow: inset 0 0 0 1px var(--line-2), 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent); }
+.search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none; color: var(--ink); font-size: 13.5px; }
+.search input::placeholder { color: var(--ink-3); }
+.search input::-webkit-search-cancel-button { display: none; }
+.search:focus-within kbd { visibility: hidden; }
+#filters { display: grid; grid-template-columns: repeat(3, auto); justify-content: stretch; }
+
+.list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 6px 10px; outline: 0; }
+.card {
+  display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; padding: 8px; border-radius: var(--r-card);
+  cursor: pointer; content-visibility: auto; contain-intrinsic-size: auto 92px;
+  transition: background-color .12s;
+}
+.card:hover, .card.is-hover { background: var(--wash); }
+.card.is-selected { background: var(--wash-2); box-shadow: inset 0 0 0 1px var(--line-2); }
+.list:focus-visible .card.is-selected { box-shadow: inset 0 0 0 2px var(--accent); }
+.thumb {
+  position: relative; width: 88px; height: 76px; border-radius: 12px; overflow: hidden;
+  background: var(--field); display: grid; place-items: center; color: var(--ink-3);
+}
+.thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.thumb .score-bar {
+  position: absolute; left: 6px; right: 6px; bottom: 5px; height: 3px; border-radius: 3px; overflow: hidden;
+  background: rgba(10, 12, 16, .5);
+}
+.thumb .score-bar::after { content: ""; position: absolute; inset: 0; transform-origin: left; transform: scaleX(var(--s)); background: #fff; border-radius: 3px; }
+.c-body { display: grid; align-content: center; gap: 3px; min-width: 0; }
+.c-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.c-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 650; }
+.c-price { font-size: 13.5px; font-weight: 650; white-space: nowrap; }
+.c-sub { color: var(--ink-2); font-size: 12px; }
+.c-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-foot { margin-top: 3px; }
+.c-chips { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; }
+.flag { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 6px; border-radius: 999px; font-size: 11.5px; font-weight: 650; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line); }
+.flag .i { width: 12px; height: 12px; color: var(--pass); }
+.flag.conflict { padding: 0 5px; }
+.flag.conflict .i { color: var(--maybe); }
+.c-margin { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 650; white-space: nowrap; }
+.c-margin .i { width: 9px; height: 9px; }
+.c-margin.up .i { color: var(--deal); }
+.c-margin.down .i { color: var(--pass); }
+.list-end { height: 1px; }
+.card.skel { pointer-events: none; }
+.card.skel .c-body i { display: block; height: 10px; border-radius: 5px; background: var(--field); }
+.card.skel .c-body i:nth-child(1) { width: 70%; }
+.card.skel .c-body i:nth-child(2) { width: 45%; margin-top: 6px; }
+.card.skel .c-body i:nth-child(3) { width: 30%; margin-top: 6px; }
+.skel .thumb, .card.skel .c-body i { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .45; } }
+
+/* ---------- detail panel ---------- */
+#detail {
+  right: var(--gap); width: var(--detail-w);
+  transition: transform .34s var(--ease), opacity .24s var(--ease), visibility 0s linear .34s;
+  transform: translateX(28px); opacity: 0; visibility: hidden;
+}
+body.detail-open #detail { transform: none; opacity: 1; visibility: visible; transition: transform .38s var(--spring), opacity .22s var(--ease), visibility 0s; }
+body:not([data-view="map"]) #detail { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .2s var(--ease), visibility 0s linear .2s; }
+#detail.is-loading .d-scroll { opacity: .55; transition: opacity .15s .1s; }
+.d-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 10px; }
+.d-media { position: relative; }
+.d-close { position: absolute; top: 10px; right: 10px; z-index: 4; background: var(--on-photo); color: var(--ink); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.d-close:hover { background: var(--glass-strong); }
+.d-body { display: grid; gap: 20px; padding: 16px 8px 8px; }
+.d-head { display: grid; gap: 6px; justify-items: start; }
+.d-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.d-chips:empty { display: none; }
+.d-addr { font: 650 22px/1.2 var(--font-display); letter-spacing: -.02em; }
+.d-sub { color: var(--ink-2); font-size: 13px; }
+.d-head .btn { margin-top: 6px; }
+
+.gallery { position: relative; overflow: hidden; border-radius: 16px; background: var(--field); aspect-ratio: 3 / 2; }
+.g-track { display: flex; height: 100%; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; outline: 0; }
+.g-track::-webkit-scrollbar { display: none; }
+.g-track img { flex: 0 0 100%; width: 100%; height: 100%; object-fit: cover; scroll-snap-align: center; scroll-snap-stop: always; user-select: none; cursor: zoom-in; }
+.g-empty { display: grid; place-items: center; align-content: center; gap: 6px; color: var(--ink-3); font-size: 12.5px; }
+.g-empty .i { width: 22px; height: 22px; }
+.g-btn {
+  position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 34px; height: 34px; margin-top: -17px;
+  border: 0; border-radius: 50%; color: var(--ink); background: var(--on-photo);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  opacity: 0; transition: opacity .18s, transform .12s var(--ease);
+}
+.g-btn.prev { left: 10px; }
+.g-btn.next { right: 10px; }
+.g-btn:active { transform: scale(.92); }
+.gallery:hover .g-btn, .g-btn:focus-visible { opacity: 1; }
+.g-count {
+  position: absolute; left: 10px; bottom: 10px; z-index: 2; display: inline-flex; align-items: center; gap: 5px;
+  height: 26px; padding: 0 9px; border: 0; border-radius: 999px; background: var(--on-photo); color: var(--ink);
+  font-size: 12px; font-weight: 650; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+.g-count .i { width: 13px; height: 13px; }
+
+.sec { display: grid; gap: 10px; }
+.sec-title { display: flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+.sec-title .i { width: 14px; height: 14px; }
+.sec-title .aside { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.sec-note { font-size: 12px; color: var(--ink-3); }
+.sec-note b { color: var(--ink-2); font-weight: 650; }
+.empty-note { font-size: 12.5px; color: var(--ink-3); }
+
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; overflow: hidden; border-radius: 14px; background: var(--line); box-shadow: inset 0 0 0 1px var(--line); }
+.facts > div { padding: 9px 12px; background: var(--glass-solid); }
+.facts dt { font-size: 11.5px; color: var(--ink-3); }
+.facts dd { font-size: 14px; font-weight: 650; margin-top: 1px; }
+
+/* deal math */
+.figs { display: flex; align-items: flex-end; gap: 22px; flex-wrap: wrap; }
+.fig-label { font-size: 12px; color: var(--ink-2); }
+.fig-val { font: 650 22px/1.1 var(--font-display); letter-spacing: -.02em; margin-top: 2px; }
+.fig.hero .fig-val { font-size: 48px; letter-spacing: -.035em; line-height: 1; margin-top: 4px; }
+.fig-sub { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; }
+.stack { position: relative; display: flex; gap: 2px; height: 12px; margin-top: 2px; }
+.stack > i { flex: 1 1 0; min-width: 2px; background: var(--c); }
+.stack > i:first-child { border-radius: 4px 0 0 4px; }
+.stack > i:last-of-type { border-radius: 0 4px 4px 0; }
+.stack > i.gain { background: var(--deal); }
+.stack .loss { position: absolute; top: -3px; bottom: -3px; right: 0; border-left: 2px solid var(--pass); background: color-mix(in oklab, var(--pass) 28%, transparent); border-radius: 0 5px 5px 0; }
+.legend2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; }
+.legend2 > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.legend2 dt { display: flex; align-items: center; gap: 7px; color: var(--ink-2); white-space: nowrap; }
+.legend2 dt i { width: 10px; height: 4px; border-radius: 2px; background: var(--c); transform: translateY(-2px); }
+.legend2 dd { font-weight: 650; white-space: nowrap; }
+
+.meters { display: grid; gap: 8px; }
+.meter { display: grid; grid-template-columns: 82px 1fr 38px; align-items: center; gap: 10px; font-size: 12.5px; }
+.m-label { color: var(--ink-2); }
+.m-track { position: relative; height: 6px; border-radius: 3px; background: color-mix(in oklab, var(--seq) 18%, transparent); overflow: hidden; }
+.m-track i { position: absolute; inset: 0 auto 0 0; width: calc(var(--v) * 100%); border-radius: 0 3px 3px 0; background: var(--seq); }
+.m-val { text-align: right; font-weight: 650; }
+
+/* AI assessment */
+.ai-card { display: grid; gap: 12px; padding: 14px; border-radius: 16px; background: var(--wash); box-shadow: inset 0 0 0 1px var(--line); }
+.ai-card .sec-title .i { color: var(--accent); }
+.ai-verdict { font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+.ai-verdict b { color: var(--ink); font-weight: 650; }
+.ai-grid { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 9px 14px; font-size: 12.5px; }
+.ai-grid > span:nth-child(odd) { color: var(--ink-2); }
+.cells { display: inline-flex; align-items: center; gap: 3px; }
+.cells i { width: 14px; height: 8px; border-radius: 2px; background: color-mix(in oklab, var(--seq) 18%, transparent); }
+.cells i.on { background: var(--seq); }
+.cells b { margin-left: 8px; font-weight: 650; }
+.scope { display: inline-flex; gap: 3px; padding: 2px; border-radius: 999px; background: var(--field); }
+.scope span { padding: 2px 9px; border-radius: 999px; color: var(--ink-3); font-size: 11.5px; font-weight: 600; }
+.scope span.on { background: var(--lens); box-shadow: var(--lens-shadow); color: var(--ink); }
+.flags { display: flex; flex-wrap: wrap; gap: 6px; }
+.flags .chip { --c: var(--pass); font-weight: 600; }
+.flags .chip .i { width: 12px; height: 12px; color: var(--pass); }
+.ai-notes { position: relative; padding-left: 12px; font-size: 12.5px; line-height: 1.55; color: var(--ink-2); }
+.ai-notes::before { content: ""; position: absolute; left: 0; top: 2px; bottom: 2px; width: 2px; border-radius: 2px; background: var(--line-2); }
+.ai-foot { font-size: 11.5px; color: var(--ink-3); }
+
+.remarks { font-size: 13px; line-height: 1.6; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; }
+.remarks.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; }
+
+/* label widget */
+.labeler { display: grid; gap: 12px; }
+.lb-cond { display: grid; gap: 6px; }
+.lb-cond-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); }
+.lb-cond-head b { color: var(--ink-2); font-weight: 600; }
+.cond { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; padding: 3px; border-radius: 12px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); }
+.cond button { height: 28px; border: 0; border-radius: 9px; background: none; color: var(--ink-2); font-size: 12.5px; font-weight: 600; transition: background-color .15s, color .15s; }
+.cond button:hover { background: var(--wash-2); color: var(--ink); }
+.cond button[aria-checked="true"] { background: var(--lens); box-shadow: var(--lens-shadow); color: var(--ink); }
+.vbtns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.vbtn {
+  position: relative; display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border: 0; border-radius: 13px;
+  background: var(--field); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); font-size: 13.5px; font-weight: 650;
+  transition: background-color .15s, box-shadow .15s, transform .12s var(--ease);
+}
+.vbtn > i { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
+.vbtn kbd { margin-left: auto; }
+.vbtn:hover { background: color-mix(in oklab, var(--c) 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--c) 40%, transparent); }
+.vbtn:active { transform: scale(.97); }
+.vbtn[aria-pressed="true"] { background: color-mix(in oklab, var(--c) 20%, transparent); box-shadow: inset 0 0 0 1.5px var(--c); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { height: 28px; padding: 0 11px; border: 0; border-radius: 999px; background: none; box-shadow: inset 0 0 0 1px var(--line-2); color: var(--ink-2); font-size: 12px; font-weight: 600; transition: background-color .15s, color .15s, box-shadow .15s; }
+.tag:hover { color: var(--ink); background: var(--wash); }
+.tag[aria-pressed="true"] { color: var(--ink); background: color-mix(in oklab, var(--accent) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 55%, transparent); }
+.labeler.is-saving { pointer-events: none; }
+.labeler.is-saving .vbtn:not(.is-busy) { opacity: .5; }
+
+/* ---------- map furniture ---------- */
+.map-ctl {
+  position: fixed; z-index: 10; right: calc(var(--ri) + var(--gap)); bottom: var(--gap);
+  display: grid; gap: 2px; padding: 4px; border-radius: 16px;
+  transition: right .34s var(--ease), opacity .25s var(--ease), visibility 0s;
+}
+.legend {
+  position: fixed; z-index: 10; left: calc(var(--li) + var(--gap)); bottom: var(--gap);
+  display: flex; align-items: center; gap: 14px; height: 36px; padding: 0 14px; border-radius: 999px;
+  font-size: 12px; color: var(--ink-2); white-space: nowrap;
+  transition: left .34s var(--ease), opacity .25s var(--ease), visibility 0s;
+}
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend .dot.v-pass, .legend .dot.v-none { width: 7px; height: 7px; }
+.legend .dot.v-deal { width: 10px; height: 10px; }
+.legend .dot.v-maybe { width: 9px; height: 9px; }
+body.no-ai .legend .ai-only { display: none; }
+/* Leaflet's stylesheet loads after this one, so these overrides are scoped to #map to outrank it. */
+#map.leaflet-container { background: var(--map-bg); font: inherit; outline: 0; }
+#map .leaflet-bottom.leaflet-right { right: calc(var(--ri) + var(--gap) + 52px); bottom: calc(var(--gap) - 4px); transition: right .34s var(--ease); }
+#map .leaflet-control-attribution { margin: 0; padding: 2px 8px; border-radius: 8px; background: none; color: var(--ink-3); font-size: 10.5px; line-height: 1.5; text-shadow: 0 1px 2px var(--map-bg); }
+#map .leaflet-control-attribution a { color: var(--ink-2); text-decoration: none; }
+body:not([data-view="map"]) #map .leaflet-control-container { visibility: hidden; }
+
+.tip {
+  position: fixed; z-index: 15; left: 0; top: 0; min-width: 190px; max-width: 280px; padding: 10px 12px; border-radius: 14px;
+  background: var(--glass-strong); box-shadow: var(--shadow); pointer-events: none; will-change: transform;
+}
+.tip-addr { font-size: 13px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tip-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: 12px; color: var(--ink-2); }
+.tip-row b { color: var(--ink); font-weight: 650; }
+
+/* ---------- pages (triage, metrics) float over the dimmed map ---------- */
+.page { position: fixed; inset: 0; z-index: 5; overflow-y: auto; overscroll-behavior: contain; padding: calc(var(--top) + 8px) 20px 40px; }
+.page-inner { max-width: 1180px; margin: 0 auto; display: grid; gap: 12px; animation: rise .35s var(--ease) both; }
+.page-inner.narrow { max-width: 560px; margin-top: 8vh; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+.page.is-loading .page-inner { opacity: .6; transition: opacity .15s .12s; }
+.page-head { display: grid; gap: 4px; padding: 6px 4px 4px; }
+.page-head h1 { font: 650 30px/1.1 var(--font-display); letter-spacing: -.025em; }
+.page-head p { color: var(--ink-2); font-size: 13.5px; max-width: 70ch; }
+
+.t-bar { display: flex; align-items: center; gap: 18px; min-height: 52px; padding: 8px 10px 8px 16px; border-radius: 18px; }
+.t-progress { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.t-progress b { color: var(--ink); font-weight: 650; }
+.t-keys { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.t-keys kbd + kbd { margin-left: -2px; }
+.t-keys .sep { width: 1px; height: 14px; margin: 0 6px; background: var(--line-2); }
+.switch { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; color: var(--ink-2); cursor: pointer; user-select: none; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch .sw { position: relative; width: 36px; height: 22px; border-radius: 999px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line-2); transition: background-color .2s; }
+.switch .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink-2); box-shadow: 0 1px 3px rgba(0, 0, 0, .35); transition: transform .3s var(--spring), background-color .2s; }
+.switch input:checked + .sw { background: color-mix(in oklab, var(--accent) 45%, transparent); }
+.switch input:checked + .sw::after { transform: translateX(14px); background: #fff; }
+.switch input:focus-visible + .sw { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch:hover { color: var(--ink); }
+
+.t-card { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); gap: 0; border-radius: 26px; }
+.t-card.leaving { opacity: 0; transform: translateX(-18px) scale(.99); transition: opacity .18s var(--ease), transform .18s var(--ease); }
+.t-media { display: grid; align-content: start; gap: 8px; padding: 12px; position: sticky; top: calc(var(--top) + 8px); }
+.t-media .gallery { aspect-ratio: 4 / 3; border-radius: 18px; }
+.t-thumbs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.t-thumbs button { padding: 0; border: 0; border-radius: 12px; overflow: hidden; aspect-ratio: 4 / 3; background: var(--field); cursor: zoom-in; }
+.t-thumbs img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .35s var(--ease), opacity .2s; }
+.t-thumbs button:hover img { transform: scale(1.05); opacity: .9; }
+.t-body { display: grid; align-content: start; gap: 20px; padding: 22px 22px 22px 10px; }
+.t-body .d-addr { font-size: 26px; }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.kpi { display: grid; align-content: start; gap: 4px; padding: 16px 18px 18px; border-radius: 20px; }
+.k-label { font-size: 12.5px; color: var(--ink-2); }
+.k-val { font: 650 34px/1.1 var(--font-display); letter-spacing: -.03em; }
+.k-val.nil, .s-val.nil { color: var(--ink-3); font-weight: 500; }
+.k-sub { font-size: 12px; color: var(--ink-3); }
+.stackbar { display: flex; gap: 2px; height: 8px; margin-top: 6px; }
+.stackbar i { flex: 1 1 0; background: var(--c); }
+.stackbar i:first-child { border-radius: 4px 0 0 4px; }
+.stackbar i:last-child { border-radius: 0 4px 4px 0; }
+.stackbar i:only-child { border-radius: 4px; }
+.mini-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 12px; color: var(--ink-2); }
+.mini-legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+.bento { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.card-g { display: grid; align-content: start; gap: 16px; padding: 18px 20px 20px; border-radius: 22px; min-width: 0; }
+.card-g.wide { grid-column: 1 / -1; }
+.cg-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.cg-head h2 { font: 650 16px/1.3 var(--font-display); letter-spacing: -.01em; }
+.cg-head p { margin-top: 3px; font-size: 12.5px; color: var(--ink-3); max-width: 60ch; }
+.bars { display: grid; gap: 12px; }
+.bar-row { display: grid; grid-template-columns: 90px 1fr 44px; align-items: center; gap: 12px; font-size: 13px; }
+.b-label { color: var(--ink-2); }
+.b-track { position: relative; height: 12px; }
+.b-track::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 1px; background: var(--line-2); }
+.b-track i { position: absolute; left: 0; top: 0; bottom: 0; width: calc(var(--v) * 100%); min-width: 2px; border-radius: 0 4px 4px 0; background: var(--seq); }
+.b-val { text-align: right; font-weight: 650; }
+.b-axis { display: grid; grid-template-columns: 90px 1fr 44px; gap: 12px; font-size: 11px; color: var(--ink-3); }
+.b-axis span:nth-child(2) { display: flex; justify-content: space-between; }
+.fit { display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px; background: var(--wash); box-shadow: inset 0 0 0 1px var(--line); font-size: 13px; }
+.fit-head { display: flex; align-items: center; gap: 8px; }
+.fit-head .i { color: var(--c); }
+.fit p { color: var(--ink-2); }
+.agree { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.stat .s-val { font: 650 24px/1.15 var(--font-display); letter-spacing: -.02em; }
+.stat .s-label { font-size: 12px; color: var(--ink-2); }
+.stat .s-sub { font-size: 11.5px; color: var(--ink-3); }
+.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.tbl th { text-align: left; font-weight: 600; color: var(--ink-3); padding: 0 10px 8px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--line); color: var(--ink-2); vertical-align: top; }
+.tbl td.strong { color: var(--ink); font-weight: 650; }
+.tbl tr:last-child td { border-bottom: 0; }
+.tbl .num { text-align: right; }
+.tbl th.num { text-align: right; }
+.matrix { justify-self: start; border-collapse: separate; border-spacing: 3px; font-size: 12.5px; }
+.matrix caption { caption-side: bottom; padding-top: 6px; text-align: left; font-size: 11.5px; color: var(--ink-3); }
+.matrix th { padding: 4px 8px; font-weight: 600; color: var(--ink-3); text-align: center; }
+.matrix th[scope="row"] { text-align: right; }
+.matrix td { width: 64px; height: 40px; text-align: center; border-radius: 8px; font-weight: 650; color: var(--ink); background: color-mix(in oklab, var(--seq) var(--t), var(--field)); }
+.matrix td.hi { color: #fff; }
+.matrix td.diag { box-shadow: inset 0 0 0 1.5px var(--line-2); }
+.dlist { display: grid; }
+.dlist a { display: grid; grid-template-columns: minmax(0, 1fr) auto 44px; gap: 12px; align-items: center; padding: 9px 8px; margin: 0 -8px; border-radius: 10px; text-decoration: none; font-size: 13px; }
+.dlist a:hover { background: var(--wash); }
+.dlist li + li a { box-shadow: 0 -1px 0 var(--line); }
+.dl-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.dl-score { text-align: right; color: var(--ink-2); }
+.badge { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; color: var(--ink); }
+.badge .i { width: 13px; height: 13px; color: var(--c); }
+
+/* ---------- photo viewer ---------- */
+.viewer { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 64px 72px; background: rgba(5, 6, 8, .9); animation: fade .2s var(--ease); }
+@keyframes fade { from { opacity: 0; } }
+.viewer img { max-width: min(100%, 1280px); max-height: calc(100dvh - 128px); border-radius: 12px; object-fit: contain; box-shadow: 0 30px 80px rgba(0, 0, 0, .6); }
+.viewer .g-btn { opacity: 1; width: 44px; height: 44px; margin-top: -22px; background: rgba(255, 255, 255, .12); color: #fff; }
+.viewer .g-btn.prev { left: 18px; }
+.viewer .g-btn.next { right: 18px; }
+.viewer .v-close { position: fixed; top: 16px; right: 16px; color: #fff; background: rgba(255, 255, 255, .12); }
+.viewer .v-count { position: fixed; top: 22px; left: 50%; transform: translateX(-50%); color: rgba(255, 255, 255, .8); font-size: 13px; font-weight: 600; }
+
+/* ---------- toasts ---------- */
+.toasts { position: fixed; z-index: 50; left: 50%; bottom: 20px; transform: translateX(-50%); display: grid; justify-items: center; gap: 8px; pointer-events: none; }
+.toast { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 999px; font-size: 13px; font-weight: 600; animation: toast-in .32s var(--spring) both; }
+.toast .i { width: 15px; height: 15px; color: var(--c, var(--deal)); }
+.toast.error { --c: var(--pass); }
+.toast.out { opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .2s; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px) scale(.97); } }
+
+/* ---------- responsive ---------- */
+@media (max-width: 1180px) {
+  :root { --list-w: 340px; --detail-w: 400px; }
+  .summary { display: none; }
+  .legend .you { display: none; }
+}
+@media (max-width: 980px) {
+  .t-card { grid-template-columns: 1fr; }
+  .t-media .gallery { position: relative; top: 0; }
+  .t-body { padding: 6px 20px 22px; }
+  .bento { grid-template-columns: 1fr; }
+  .agree { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .t-keys { display: none; }
+  body.detail-open .legend { opacity: 0; visibility: hidden; }
+}
+@media (max-width: 760px) {
+  :root { --gap: 8px; --top: 66px; }
+  .topbar { height: 48px; grid-template-columns: auto 1fr auto; padding: 0 6px 0 8px; border-radius: 16px; }
+  .brand-name, #listToggle { display: none; }
+  #nav { justify-self: center; }
+  #nav > a { padding: 0 11px; }
+  body { --li: 0px; --ri: 0px; }
+  #listPanel { top: auto; left: var(--gap); right: var(--gap); width: auto; height: 46vh; }
+  #detail { top: var(--top); left: var(--gap); right: var(--gap); width: auto; }
+  .legend { display: none; }
+  .map-ctl { bottom: calc(46vh + 2 * var(--gap)); }
+  #map .leaflet-bottom.leaflet-right { right: auto; left: var(--gap); bottom: calc(46vh + 2 * var(--gap)); }
+  .page { padding: calc(var(--top) + 4px) 8px 24px; }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .viewer { padding: 56px 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; transition-delay: 0s !important; scroll-behavior: auto !important; }
+}
 </style>
 </head>
-<body>
-<header>
-  <h1>FlipFinder</h1>
-  <nav>
-    <button data-v="mapview" class="on">Map</button>
-    <button data-v="triage">Triage</button>
-    <button data-v="metrics">Metrics</button>
-  </nav>
-  <span id="stat"></span>
-</header>
-<main>
-  <div id="mapview" class="view on">
-    <div id="mapcol">
-      <div id="mapbar">
-        <span>Show</span>
-        <div class="seg">
-          <button data-f="all">All</button><button data-f="maybedeal">Maybe + Deal</button><button data-f="deal">Deal only</button>
-        </div>
-        <div class="legend">
-          <span><i style="background:var(--v-deal)"></i>Deal</span>
-          <span><i style="background:var(--v-maybe)"></i>Maybe</span>
-          <span><i style="background:var(--v-pass)"></i>Pass</span>
-          <span><i style="background:var(--v-none)"></i>Not labeled</span>
-        </div>
-      </div>
-      <div id="map"></div>
-    </div>
-    <div id="panel"></div>
+<body data-view="map">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8"/><path d="M17.5 13.5v4A1.5 1.5 0 0 1 16 19H6.5A1.5 1.5 0 0 1 5 17.5V8a1.5 1.5 0 0 1 1.5-1.5h4"/></symbol>
+  <symbol id="i-chev-l" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v1.5M12 19.5V21M5.6 5.6l1.1 1.1M17.3 17.3l1.1 1.1M3 12h1.5M19.5 12H21M5.6 18.4l1.1-1.1M17.3 6.7l1.1-1.1"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.5 14.2A7.5 7.5 0 0 1 9.8 4.5a7.5 7.5 0 1 0 9.7 9.7z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5.5 12h13"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4.5 9V6a1.5 1.5 0 0 1 1.5-1.5h3M15 4.5h3A1.5 1.5 0 0 1 19.5 6v3M19.5 15v3a1.5 1.5 0 0 1-1.5 1.5h-3M9 19.5H6A1.5 1.5 0 0 1 4.5 18v-3"/><circle cx="12" cy="12" r="2.2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 4.6 2.9 17.5A2 2 0 0 0 4.6 20.5h14.8a2 2 0 0 0 1.7-3L13.7 4.6a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4M12 16.8v.2"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5.5 20.5V4.5M5.5 4.5h11l-2.2 4 2.2 4h-11"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3.5 3.5l17 17"/><path d="M10.6 5.6A9.8 9.8 0 0 1 12 5.5c5.5 0 9 6.5 9 6.5a16 16 0 0 1-2.9 3.6M6.7 6.7C4.1 8.4 3 12 3 12s3.5 6.5 9 6.5a9 9 0 0 0 4.9-1.5"/><path d="M10 10a2.8 2.8 0 0 0 4 4"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5c.6 4.4 2.1 5.9 6.5 6.5-4.4.6-5.9 2.1-6.5 6.5-.6-4.4-2.1-5.9-6.5-6.5 4.4-.6 5.9-2.1 6.5-6.5z"/><path d="M18.5 15.5c.3 1.8.9 2.4 2.5 2.7-1.6.3-2.2.9-2.5 2.8-.3-1.9-.9-2.5-2.5-2.8 1.6-.3 2.2-.9 2.5-2.7z"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11 12 4.5l8 6.5"/><path d="M6.5 9.5v10h11v-10"/><path d="M10 19.5v-5h4v5"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9.5 4.5v15"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 11A7.5 7.5 0 0 0 6 6.8L4.5 8.5"/><path d="M4.5 4.5v4h4"/><path d="M4.5 13A7.5 7.5 0 0 0 18 17.2l1.5-1.7"/><path d="M19.5 19.5v-4h-4"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14.5 4.5h5v5M9.5 19.5h-5v-5M19.5 4.5 14 10M4.5 19.5 10 14"/></symbol>
+  <symbol id="i-tri-up" viewBox="0 0 24 24"><path d="M12 5 21 19H3z"/></symbol>
+  <symbol id="i-tri-down" viewBox="0 0 24 24"><path d="M12 19 3 5h18z"/></symbol>
+</svg>
+
+<header class="topbar glass">
+  <div class="tb-start">
+    <a class="brand" href="#/map" aria-label="FlipFinder, map">
+      <svg viewBox="0 0 28 28" aria-hidden="true">
+        <defs><linearGradient id="bm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6ee7b7"/><stop offset="1" stop-color="#60a5fa"/></linearGradient></defs>
+        <rect width="28" height="28" rx="8" fill="url(#bm)"/>
+        <path d="M0 8a8 8 0 0 1 8-8h12a8 8 0 0 1 8 8v1.5C22 13 6 13 0 9.5z" fill="#fff" opacity=".2"/>
+        <path d="M7.5 14.5 14 9l6.5 5.5M10 13.2v6.3h8v-6.3" fill="none" stroke="#06110d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="brand-name">FlipFinder</span>
+    </a>
+    <button class="icon-btn map-only" id="listToggle" aria-pressed="true" aria-label="Show listing panel" title="Toggle list (L)"><svg class="i"><use href="#i-sidebar"/></svg></button>
   </div>
-  <div id="triage" class="view"></div>
-  <div id="metrics" class="view"></div>
-</main>
-<script>
-const TAGS = ["bad area","reno too deep","overpriced","good bones","wrong size","weird layout","bad comps","flood/structural"];
-const V_NAMES = ["Pass","Maybe","Deal"];
-let blind = localStorage.getItem("ff_blind") === "1";
-let map, markers = [], current = null, triageCur = null;
+  <nav class="seg" id="nav" aria-label="Views">
+    <span class="lens" aria-hidden="true"></span>
+    <a href="#/map" data-view="map" aria-current="page">Map</a>
+    <a href="#/triage" data-view="triage">Triage</a>
+    <a href="#/metrics" data-view="metrics">Metrics</a>
+  </nav>
+  <div class="tb-end">
+    <div class="summary" id="summary" aria-live="polite"></div>
+    <button class="icon-btn" id="themeToggle" aria-label="Switch theme"><svg class="i"><use href="#i-sun"/></svg></button>
+  </div>
+</header>
 
-const $ = s => document.querySelector(s);
-const fmt$ = v => v == null ? "—" : "$" + Math.round(v).toLocaleString();
-const fmt = v => v == null ? "—" : Math.round(v).toLocaleString();
-const loc = l => l.city + (l.zip ? " " + l.zip : "");
-const pct = v => v == null ? "—" : (v * 100).toFixed(1) + "%";
-// Model output echoes listing remarks, so it's escaped before going into innerHTML.
-const esc = s => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
-
-function verdictLine(a) {
-  if (a.margin_ceiling == null) return "";
-  const allows = `Margin allows <b>${V_NAMES[a.margin_ceiling]}</b>`;
-  if (!a.downgrade) return `<div class="ai-verdict">${allows}</div>`;
-  return `<div class="ai-verdict">${allows} — AI downgraded to <b>${V_NAMES[a.suggested_verdict]}</b> because ${a.reasons.map(esc).join("; ")}</div>`;
-}
-function aiBlock(l) {
-  const a = l.ai_label;
-  if (blind || !a) return "";
-  return `<div class="ai">
-    <div class="ai-head"><span>AI label — model output, not a fact</span><span>${esc(a.model)} · ${esc(a.prompt_version)}</span></div>
-    ${verdictLine(a)}
-    ${a.text_conflict ? `<div class="warn" style="margin:0 0 8px">Remarks describe a different condition than the photos show — check the listing, not just the photos.</div>` : ""}
-    <div class="ai-row">
-      <span>Condition <b>${a.condition}/10</b></span>
-      <span>Reno <b>${esc(a.reno_scope)}</b></span>
-      ${a.photos_representative ? "" : `<span style="color:var(--amber)">photos may not be representative</span>`}
+<aside class="panel glass map-ui" id="listPanel" aria-label="Listings">
+  <div class="lp-head">
+    <div class="lp-title">
+      <h1 id="listTitle">Listings</h1>
+      <label class="select">
+        <span class="sr-only">Sort listings</span>
+        <select id="sort">
+          <option value="score">Best score</option>
+          <option value="margin">Highest margin</option>
+          <option value="spread">Biggest spread</option>
+          <option value="price">Lowest price</option>
+          <option value="newest">Newest</option>
+        </select>
+        <svg class="i"><use href="#i-chev-d"/></svg>
+      </label>
     </div>
-    ${a.red_flags.length ? `<div class="chips">${a.red_flags.map(f => `<span class="chip">${esc(f)}</span>`).join("")}</div>` : ""}
-    ${a.notes ? `<div class="ai-notes">${esc(a.notes)}</div>` : ""}
-  </div>`;
-}
-
-// ---- tabs ----
-document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
-  document.querySelectorAll("nav button").forEach(x => x.classList.remove("on"));
-  document.querySelectorAll(".view").forEach(x => x.classList.remove("on"));
-  b.classList.add("on");
-  $("#" + b.dataset.v).classList.add("on");
-  if (b.dataset.v === "triage") loadTriage();
-  if (b.dataset.v === "metrics") loadMetrics();
-  if (b.dataset.v === "mapview") setTimeout(() => map.invalidateSize(), 50);
-});
-
-// ---- map ----
-const VERDICT_COLORS = ["var(--v-pass)", "var(--v-maybe)", "var(--v-deal)"];
-const FILTERS = { all: () => true, maybedeal: r => r.ai_verdict >= 1, deal: r => r.ai_verdict === 2 };
-let mapRows = [];
-// Storage can be unavailable (private windows, blocked site data); the filter just resets.
-let mapFilter = "all";
-try { if (FILTERS[localStorage.getItem("ff_map_filter")]) mapFilter = localStorage.getItem("ff_map_filter"); } catch (e) {}
-
-function cssVar(v) {
-  return getComputedStyle(document.documentElement).getPropertyValue(v.slice(4, -1)).trim();
-}
-function pinColor(r) {
-  return cssVar(r.ai_verdict == null ? "var(--v-none)" : VERDICT_COLORS[r.ai_verdict]);
-}
-function renderMarkers(fit) {
-  markers.forEach(m => m.remove());
-  markers = [];
-  document.querySelectorAll("#mapbar .seg button").forEach(b => b.classList.toggle("on", b.dataset.f === mapFilter));
-  const shown = mapRows.filter(FILTERS[mapFilter]);
-  $("#stat").textContent = `${shown.length} of ${mapRows.length} scored listings`;
-  const bounds = [];
-  shown.forEach(r => {
-    const m = L.circleMarker([r.lat, r.lng], {
-      radius: 7, color: r.labeled ? "#fff" : "transparent", weight: 1.5,
-      fillColor: pinColor(r), fillOpacity: 0.9,
-    }).addTo(map);
-    m.on("click", () => openPanel(r.id));
-    const verdict = r.ai_verdict == null ? "not labeled" : "AI " + V_NAMES[r.ai_verdict];
-    m.bindTooltip(`${esc(r.address)} — ${fmt$(r.price)} · ${verdict} · score ${r.score.toFixed(2)}`);
-    markers.push(m);
-    bounds.push([r.lat, r.lng]);
-  });
-  map.invalidateSize();
-  if (fit && bounds.length) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
-}
-async function loadMap() {
-  mapRows = await (await fetch("/api/listings")).json();
-  renderMarkers(true);
-}
-document.querySelectorAll("#mapbar .seg button").forEach(b => b.onclick = () => {
-  mapFilter = b.dataset.f;
-  try { localStorage.setItem("ff_map_filter", mapFilter); } catch (e) {}
-  renderMarkers(true);
-});
-function labelWidget(l, onDone) {
-  const picked = new Set();
-  // Prefilling with the AI condition in blind mode would leak the suggestion.
-  const initialCond = l.label?.condition_human ?? (!blind && l.ai_label ? l.ai_label.condition : null);
-  const div = document.createElement("div");
-  div.innerHTML = `
-    <label class="cond">Condition
-      <select>
-        <option value="">—</option>
-        ${Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}" ${initialCond === i + 1 ? "selected" : ""}>${i + 1}</option>`).join("")}
-      </select>
-      <span>1 gutted · 10 move-in ready</span>
+    <label class="search">
+      <svg class="i"><use href="#i-search"/></svg>
+      <input id="search" type="search" placeholder="Search address, city or ZIP" autocomplete="off" spellcheck="false" aria-label="Search listings">
+      <kbd aria-hidden="true">/</kbd>
     </label>
-    <div class="verdicts">
-      ${V_NAMES.map((n, i) => `<button class="v-${n.toLowerCase()}" data-v="${i}">${n} <kbd>${i+1}</kbd></button>`).join("")}
+    <div class="seg seg-sm" id="filters" role="radiogroup" aria-label="Filter by AI verdict">
+      <span class="lens" aria-hidden="true"></span>
+      <button type="button" role="radio" data-f="all" aria-checked="true">All <span class="count num"></span></button>
+      <button type="button" role="radio" data-f="maybedeal" aria-checked="false"><i class="dot v-maybe"></i>Maybe + Deal <span class="count num"></span></button>
+      <button type="button" role="radio" data-f="deal" aria-checked="false"><i class="dot v-deal"></i>Deals <span class="count num"></span></button>
     </div>
-    <div class="tags">${TAGS.map(t => `<button data-t="${t}">${t}</button>`).join("")}</div>`;
-  div.querySelectorAll(".tags button").forEach(b => b.onclick = () => {
-    b.classList.toggle("picked");
-    picked.has(b.dataset.t) ? picked.delete(b.dataset.t) : picked.add(b.dataset.t);
-  });
-  const sel = div.querySelector(".cond select");
-  // Blur after picking so the 1/2/3 verdict keys don't also retype the select.
-  sel.onchange = () => sel.blur();
-  div.querySelectorAll(".verdicts button").forEach(b => b.onclick = async () => {
-    const body = { listing_id: l.id, verdict: +b.dataset.v, tags: [...picked], blind,
-                   ai_label_id: l.ai_label ? l.ai_label.id : null };
-    const cond = sel.value === "" ? null : +sel.value;
-    if (cond !== initialCond && cond !== null) body.condition = cond;
-    await fetch("/api/labels", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    onDone(+b.dataset.v);
-  });
-  if (l.label) {
-    const b = div.querySelector(`.verdicts button[data-v="${l.label.verdict}"]`);
-    if (b) b.classList.add("picked");
-  }
-  return div;
+  </div>
+  <div class="list" id="list" role="listbox" tabindex="0" aria-label="Scored listings">
+    <div class="card skel" aria-hidden="true"><div class="thumb"></div><div class="c-body"><i></i><i></i><i></i></div></div>
+    <div class="card skel" aria-hidden="true"><div class="thumb"></div><div class="c-body"><i></i><i></i><i></i></div></div>
+    <div class="card skel" aria-hidden="true"><div class="thumb"></div><div class="c-body"><i></i><i></i><i></i></div></div>
+    <div class="card skel" aria-hidden="true"><div class="thumb"></div><div class="c-body"><i></i><i></i><i></i></div></div>
+    <div class="card skel" aria-hidden="true"><div class="thumb"></div><div class="c-body"><i></i><i></i><i></i></div></div>
+  </div>
+</aside>
+
+<aside class="panel glass strong map-ui" id="detail" aria-label="Listing details" inert></aside>
+
+<div class="map-ctl glass map-ui" role="group" aria-label="Map controls">
+  <button class="icon-btn" type="button" data-map="in" aria-label="Zoom in"><svg class="i"><use href="#i-plus"/></svg></button>
+  <button class="icon-btn" type="button" data-map="out" aria-label="Zoom out"><svg class="i"><use href="#i-minus"/></svg></button>
+  <button class="icon-btn" type="button" data-map="fit" aria-label="Fit listings in view"><svg class="i"><use href="#i-fit"/></svg></button>
+</div>
+<div class="legend glass map-ui" role="note" aria-label="Map legend">
+  <span class="ai-only"><i class="dot v-deal"></i>Deal</span>
+  <span class="ai-only"><i class="dot v-maybe"></i>Maybe</span>
+  <span class="ai-only"><i class="dot v-pass"></i>Pass</span>
+  <span><i class="dot v-none"></i>Not labeled</span>
+  <span class="you"><i class="dot ring"></i>You labeled</span>
+</div>
+<div class="tip" id="tip" role="tooltip" hidden>
+  <div class="tip-addr"></div>
+  <div class="tip-row"><b class="tip-price num"></b><span class="tip-margin num"></span></div>
+  <div class="tip-row"><span class="chip tip-chip"><i></i><span></span></span><span class="tip-score num"></span></div>
+</div>
+
+<section class="page" id="view-triage" aria-label="Triage" hidden></section>
+<section class="page" id="view-metrics" aria-label="Metrics" hidden></section>
+
+<div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-label="Photo viewer" hidden>
+  <img alt="">
+  <button class="g-btn prev" type="button" data-v="-1" aria-label="Previous photo"><svg class="i"><use href="#i-chev-l"/></svg></button>
+  <button class="g-btn next" type="button" data-v="1" aria-label="Next photo"><svg class="i"><use href="#i-chev-r"/></svg></button>
+  <button class="icon-btn v-close" type="button" data-v="close" aria-label="Close photo viewer"><svg class="i"><use href="#i-x"/></svg></button>
+  <div class="v-count num"></div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<!-- In-body stylesheet: the shell above paints without waiting for the CDN; the map
+     and the deferred scripts below still get Leaflet's CSS before they run. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<div id="map" aria-label="Map of scored listings"></div>
+<script defer src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script type="module">
+const Leaflet = window.L;
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+// ---------- formatting & safety ----------
+const MINUS = "−";
+const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+// Addresses, remarks and model output are untrusted text; everything goes through esc().
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ESC[c]);
+const fmtInt = v => v == null ? "—" : Math.round(v).toLocaleString("en-US");
+const fmtNum = (v, d = 1) => v == null ? "—" : (+v).toLocaleString("en-US", { maximumFractionDigits: d });
+const money = v => v == null ? "—" : (v < 0 ? MINUS : "") + "$" + Math.round(Math.abs(v)).toLocaleString("en-US");
+const pct = (v, d = 1) => v == null ? "—" : (v < 0 ? MINUS : "") + Math.abs(v * 100).toFixed(d) + "%";
+const clamp01 = v => Math.max(0, Math.min(1, +v || 0));
+const loc = l => [l.city, l.zip].filter(Boolean).join(" ");
+const plural = (n, one, many = one + "s") => `${fmtInt(n)} ${n === 1 ? one : many}`;
+const icon = (id, cls = "") => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${id}"/></svg>`;
+
+function httpsUrl(u, host) {
+  try {
+    const x = new URL(u);
+    return x.protocol === "https:" && (x.hostname === host || x.hostname.endsWith("." + host)) ? x.href : null;
+  } catch { return null; }
 }
-async function openPanel(id) {
-  const l = await (await fetch("/api/listing/" + id)).json();
-  current = l;
-  const c = l.components || {};
-  const p = $("#panel");
-  p.classList.add("open");
-  p.innerHTML = `
-    <div class="addr">${l.address}</div>
-    <div class="sub">${loc(l)} · <a class="ext" href="${l.url}" target="_blank">Redfin ↗</a></div>
-    ${l.photos.length ? `<img src="${l.photos[0]}" style="width:100%;border-radius:8px;margin-bottom:10px">` : ""}
-    ${l.score != null && !blind ? `
-      <div><b>Score ${l.score.toFixed(2)}</b></div>
-      <div class="scorebar"><i style="width:${l.score * 100}%"></i></div>` : ""}
-    <div class="grid">
-      <span>Price</span><b>${fmt$(l.price)}</b>
-      <span>Sqft</span><b>${fmt(l.sqft)}</b>
-      <span>Beds / Baths</span><b>${fmt(l.beds)} / ${fmt(l.baths)}</b>
-      <span>Year built</span><b>${l.year_built ?? "—"}</b>
-      <span>DOM</span><b>${fmt(l.dom)}</b>
-      <span>$/sqft</span><b>${l.ppsf ? "$" + l.ppsf.toFixed(0) : "—"}</b>
-    </div>
-    ${aiBlock(l)}
-    ${l.remarks ? `<div class="remarks">${l.remarks}</div>` : ""}
-    ${!blind && c.arv ? `<div class="comp">
-      <div><span>ARV (${c.comp_count} comps)</span><b>${fmt$(c.arv)}</b></div>
-      <div><span>Reno (${c.reno_tier})</span><b>${fmt$(c.reno_cost)}</b></div>
-      <div><span>Spread</span><b>${fmt$(c.spread)}</b></div>
-      <div><span>Margin</span><b>${pct(c.margin)}</b></div>
-      <div><span>Confidence</span><b>${c.confidence.toFixed(2)}</b></div>
-      <div><span>Liquidity</span><b>${c.liquidity.toFixed(2)}</b></div>
-      <div><span>Distress</span><b>${(c.distress ?? 0).toFixed(2)}</b></div>
-    </div>` : ""}
-    ${!blind && c.above_tract_p90 ? `<div class="warn">ARV $/sqft is above the 90th percentile of everything sold in this tract — likely a comp mismatch, verify before trusting the spread.</div>` : ""}
-    <div id="pw"></div>`;
-  p.querySelector("#pw").appendChild(labelWidget(l, () => { openPanel(id); loadMap(); }));
+// Redfin keeps every photo at 623px (mbphoto/genMid.*) and 1280px (bigphoto/*). Either
+// stored form maps to both, so an 88px thumbnail never decodes a 1280px original.
+const PHOTO = /^(https:\/\/ssl\.cdn-redfin\.com\/photo\/\d+\/)(?:mbphoto\/(\d+)\/genMid\.|bigphoto\/(\d+)\/)([\w-]+\.jpg)$/;
+function photo(u) {
+  const safe = httpsUrl(u, "cdn-redfin.com");
+  if (!safe) return null;
+  const m = PHOTO.exec(safe);
+  if (!m) return { mid: safe, big: safe, orig: safe };
+  const dir = m[2] || m[3];
+  return { mid: `${m[1]}mbphoto/${dir}/genMid.${m[4]}`, big: `${m[1]}bigphoto/${dir}/${m[4]}`, orig: safe };
+}
+// A derived size that doesn't exist falls back to the URL the importer stored.
+document.addEventListener("error", e => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.dataset.orig || img.currentSrc === img.dataset.orig) return;
+  img.removeAttribute("srcset");
+  img.src = img.dataset.orig;
+}, true);
+
+const VERDICTS = [
+  { key: "pass", name: "Pass" },
+  { key: "maybe", name: "Maybe" },
+  { key: "deal", name: "Deal" },
+];
+const vKey = v => VERDICTS[v]?.key ?? "none";
+const vName = v => VERDICTS[v]?.name ?? "Not labeled";
+const TAGS = ["bad area", "reno too deep", "overpriced", "good bones", "wrong size", "weird layout", "bad comps", "flood/structural"];
+
+// Storage can be unavailable (private windows, blocked site data); settings just reset.
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const narrow = matchMedia("(max-width: 760px)");
+
+async function api(path, init) {
+  const res = await fetch(path, init);
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try { const body = await res.json(); if (typeof body.detail === "string") detail = body.detail; } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
 }
 
-// ---- triage ----
-async function loadTriage() {
-  const t = $("#triage");
-  const l = await (await fetch("/api/triage/next")).json();
-  if (l.done) { t.innerHTML = `<div class="empty">All scored listings are labeled. Re-run the pipeline for fresh inventory.</div>`; return; }
-  triageCur = l;
-  const c = l.components || {};
-  t.innerHTML = `
-    <div class="tbar">
-      <span>${l.remaining} unlabeled</span>
-      <label><input type="checkbox" id="blindchk" ${blind ? "checked" : ""}> blind mode (hide algo score and AI suggestion)</label>
-      <span class="keyhint"><kbd>1</kbd> pass · <kbd>2</kbd> maybe · <kbd>3</kbd> deal</span>
-    </div>
-    <div class="card">
-      ${l.photos.length ? `<img src="${l.photos[0]}">` : ""}
-      <div class="body">
-        <div class="addr">${l.address}</div>
-        <div class="sub">${loc(l)} · <a class="ext" href="${l.url}" target="_blank">Redfin ↗</a></div>
-        <div class="grid">
-          <span>Price</span><b>${fmt$(l.price)}</b>
-          <span>Sqft</span><b>${fmt(l.sqft)}</b>
-          <span>Beds / Baths</span><b>${fmt(l.beds)} / ${fmt(l.baths)}</b>
-          <span>Year built</span><b>${l.year_built ?? "—"}</b>
-          <span>DOM</span><b>${fmt(l.dom)}</b>
-          ${!blind ? `<span>Algo score</span><b>${l.score?.toFixed(2) ?? "—"}</b>
-                      <span>Margin</span><b>${pct(c.margin)}</b>` : ""}
-        </div>
-        ${!blind && c.above_tract_p90 ? `<div class="warn">ARV $/sqft is above the 90th percentile for this tract — likely a comp mismatch.</div>` : ""}
-        ${aiBlock(l)}
-        ${l.remarks ? `<div class="remarks">${l.remarks}</div>` : ""}
-        <div id="tw"></div>
-      </div>
-    </div>`;
-  $("#blindchk").onchange = e => { blind = e.target.checked; localStorage.setItem("ff_blind", blind ? "1" : "0"); loadTriage(); };
-  $("#tw").appendChild(labelWidget(l, () => loadTriage()));
+// ---------- state ----------
+const FILTERS = {
+  all: () => true,
+  maybedeal: r => r.ai_verdict >= 1,
+  deal: r => r.ai_verdict === 2,
+};
+const SORTS = {
+  score: (a, b) => (b.score ?? -1) - (a.score ?? -1),
+  margin: (a, b) => (b.margin ?? -1e9) - (a.margin ?? -1e9),
+  spread: (a, b) => (b.spread ?? -1e12) - (a.spread ?? -1e12),
+  price: (a, b) => (a.price ?? 1e12) - (b.price ?? 1e12),
+  newest: (a, b) => (a.dom ?? 1e9) - (b.dom ?? 1e9),
+};
+const S = {
+  rows: [],
+  byId: new Map(),
+  shown: [],
+  hasAI: false,
+  filter: FILTERS[store.get("ff_map_filter")] ? store.get("ff_map_filter") : "all",
+  sort: SORTS[store.get("ff_sort")] ? store.get("ff_sort") : "score",
+  query: "",
+  selected: null,
+  hover: null,
+  blind: store.get("ff_blind") === "1",
+  view: null,
+};
+
+const listPanel = $("#listPanel");
+const listEl = $("#list");
+const detailEl = $("#detail");
+const triageEl = $("#view-triage");
+const metricsEl = $("#view-metrics");
+
+// ---------- small UI pieces ----------
+function syncLens(seg, animate = true) {
+  const lens = seg.querySelector(".lens");
+  const on = seg.querySelector('[aria-current="page"], [aria-checked="true"]');
+  if (!lens || !on || !on.offsetWidth) return;
+  lens.classList.toggle("instant", !animate);
+  lens.style.cssText = `--x:${on.offsetLeft}px;--w:${on.offsetWidth}px;opacity:1`;
+  if (!animate) requestAnimationFrame(() => lens.classList.remove("instant"));
 }
-document.addEventListener("keydown", e => {
-  if (!$("#triage").classList.contains("on") || !triageCur) return;
-  if (["1", "2", "3"].includes(e.key)) {
-    const b = $(`#tw .verdicts button[data-v="${+e.key - 1}"]`);
-    if (b) b.click();
-  }
+
+function toast(msg, kind = "ok") {
+  const el = document.createElement("div");
+  el.className = `toast glass strong ${kind}`;
+  el.innerHTML = icon(kind === "error" ? "alert" : "check");
+  el.append(msg);
+  const host = $("#toasts");
+  host.append(el);
+  while (host.children.length > 3) host.firstElementChild.remove();
+  setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 220); }, kind === "error" ? 5000 : 2200);
+}
+
+const emptyHTML = (ico, title, body, action = "") =>
+  `<div class="empty"><div class="e-icon">${icon(ico)}</div><h3>${title}</h3><p>${body}</p>${action}</div>`;
+const warnHTML = text => `<div class="warn" role="note">${icon("alert")}<span>${text}</span></div>`;
+
+// ---------- theme ----------
+const pal = {};
+function readPalette() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ["deal", "maybe", "pass", "none", "ink", "ring"]) pal[k] = cs.getPropertyValue("--" + k).trim();
+}
+const theme = () => document.documentElement.dataset.theme;
+const themeBtn = $("#themeToggle");
+function applyTheme(t, persist) {
+  document.documentElement.dataset.theme = t;
+  if (persist) store.set("ff_theme", t);
+  const next = t === "dark" ? "light" : "dark";
+  themeBtn.innerHTML = icon(t === "dark" ? "sun" : "moon");
+  themeBtn.setAttribute("aria-label", `Switch to ${next} theme`);
+  themeBtn.title = `Switch to ${next} theme`;
+  readPalette();
+  if (tiles) tiles.setUrl(tileUrl());
+  restyleMarkers();
+}
+themeBtn.addEventListener("click", () => applyTheme(theme() === "dark" ? "light" : "dark", true));
+// Follow the OS until the user picks a theme explicitly.
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", e => {
+  if (!store.get("ff_theme")) applyTheme(e.matches ? "light" : "dark", false);
 });
 
-// ---- metrics ----
-async function loadMetrics() {
-  const m = await (await fetch("/api/metrics")).json();
-  const dis = m.disagreements;
-  const ai = m.ai_agreement;
-  const rate = v => v == null ? "—" : Math.round(v * 100) + "%";
-  const row = r => `<tr><td>${r.address}</td><td>${fmt$(r.price)}</td><td>${r.score}</td></tr>`;
-  $("#metrics").innerHTML = `
-    <div class="tiles">
-      <div class="tile"><div class="big">${m.labels.total}</div><div class="lbl">labels (${m.labels.pass}P / ${m.labels.maybe}M / ${m.labels.deal}D)</div></div>
-      <div class="tile"><div class="big">${m.holdout_spearman ?? "—"}</div><div class="lbl">holdout spearman</div></div>
-      <div class="tile"><div class="big">${m.holdout_p20 ?? "—"}</div><div class="lbl">holdout precision@20</div></div>
-      <div class="tile"><div class="big">v${m.scorer_version}</div><div class="lbl">scorer version</div></div>
-      <div class="tile"><div class="big">${m.scored_listings}</div><div class="lbl">scored listings</div></div>
-    </div>
-    <div class="box">
-      <h3>Current weights</h3>
-      <table><tr>${Object.keys(m.weights).map(k => `<th>${k}</th>`).join("")}</tr>
-             <tr>${Object.values(m.weights).map(v => `<td>${v}</td>`).join("")}</tr></table>
-      <div style="margin-top:12px"><button id="fitbtn">Refit weights from labels</button></div>
-      <div id="fitout"></div>
-    </div>
-    <div class="box"><h3>AI suggestions vs your labels</h3>
-      <table>
-        <tr><th>labels with AI suggestion</th><th>verdict agreement</th><th>shown</th><th>blind</th><th>condition corrections</th><th>mean |AI − you|</th></tr>
-        <tr><td>${ai.n}</td><td>${rate(ai.verdict_agreement)}</td><td>${rate(ai.shown.verdict_agreement)} (n=${ai.shown.n})</td>
-            <td>${rate(ai.blind.verdict_agreement)} (n=${ai.blind.n})</td><td>${ai.condition_corrections}</td><td>${ai.condition_mae ?? "—"}</td></tr>
-      </table>
-      <table style="margin-top:10px;max-width:360px">
-        <tr><th>AI ↓ / you →</th>${V_NAMES.map(n => `<th>${n}</th>`).join("")}</tr>
-        ${ai.confusion.map((r, i) => `<tr><th>${V_NAMES[i]}</th>${r.map(v => `<td>${v}</td>`).join("")}</tr>`).join("")}
-      </table>
-    </div>
-    <div class="box"><h3>Algo likes it, you passed</h3>
-      <table><tr><th>Address</th><th>Price</th><th>Score</th></tr>${dis.algo_likes_you_pass.map(row).join("") || "<tr><td colspan=3>none</td></tr>"}</table></div>
-    <div class="box"><h3>You like it, algo is cold</h3>
-      <table><tr><th>Address</th><th>Price</th><th>Score</th></tr>${dis.you_like_algo_cold.map(row).join("") || "<tr><td colspan=3>none</td></tr>"}</table></div>
-    <div class="box"><h3>Recent scorer versions</h3>
-      <table><tr><th>v</th><th>train n</th><th>holdout ρ</th><th>p@20</th><th>promoted</th><th>note</th></tr>
-      ${m.recent_versions.map(v => `<tr><td>${v.version}</td><td>${v.train_n}</td><td>${v.holdout_spearman ?? "—"}</td><td>${v.holdout_p20 ?? "—"}</td><td>${v.promoted ? "yes" : "no"}</td><td>${v.note}</td></tr>`).join("") || "<tr><td colspan=6>none yet</td></tr>"}</table></div>`;
-  $("#fitbtn").onclick = async () => {
-    $("#fitbtn").disabled = true;
-    const out = await (await fetch("/api/fit", { method: "POST" })).json();
-    $("#fitout").textContent = JSON.stringify(out, null, 2);
-    $("#fitbtn").disabled = false;
-    if (out.promoted) loadMap();
+// ---------- map ----------
+let map = null;
+let tiles = null;
+let pins = null;
+const markers = new Map();
+// Stadia serves pages on localhost / 127.0.0.1 without an API key (rate limited), which is
+// exactly how this app runs. Its keyless-request check needs the default Referer.
+const tileUrl = () => `https://tiles.stadiamaps.com/tiles/${theme() === "light" ? "alidade_smooth" : "alidade_smooth_dark"}/{z}/{x}/{y}{r}.png`;
+
+function initMap() {
+  if (!Leaflet) { $("#map").classList.add("map-failed"); return; }
+  map = Leaflet.map("map", {
+    // One canvas for every pin instead of an SVG node per pin.
+    preferCanvas: true,
+    renderer: Leaflet.canvas({ padding: 0.3, tolerance: 8 }),
+    zoomControl: false,
+    zoomSnap: 0.5,
+    zoomDelta: 0.5,
+    wheelPxPerZoomLevel: 110,
+    fadeAnimation: !reduceMotion,
+    zoomAnimation: !reduceMotion,
+    minZoom: 4,
+    maxZoom: 18,
+  }).setView([32.79, -96.8], 10);
+  map.attributionControl.setPrefix(false);
+  tiles = Leaflet.tileLayer(tileUrl(), {
+    maxZoom: 20,
+    // A 512px tile decodes to ~1MB, so retina tiles are worth ~35MB of image memory
+    // on a 1.5x display for labels that are barely sharper: take them only at 2x.
+    // Overriding r beats Leaflet's own devicePixelRatio > 1 test.
+    r: devicePixelRatio >= 2 ? "@2x" : "",
+    // One ring of off-screen tiles instead of two, and no intermediate zoom levels.
+    keepBuffer: 1,
+    updateWhenZooming: false,
+    attribution: '&copy; <a href="https://stadiamaps.com/" target="_blank" rel="noopener noreferrer">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/" target="_blank" rel="noopener noreferrer">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>',
+  }).addTo(map);
+  pins = Leaflet.featureGroup().addTo(map);
+  pins.on("mouseover", e => { const id = e.layer.options.fid; setHover(id); showTip(id, e.containerPoint); });
+  pins.on("mouseout", e => { if (S.hover === e.layer.options.fid) setHover(null); hideTip(); });
+  pins.on("click", e => go(`#/map/${e.layer.options.fid}`));
+  map.on("movestart", hideTip);
+  map.on("click", () => { if (S.selected != null) go("#/map"); });
+}
+
+function markerStyle(r) {
+  const v = r.ai_verdict;
+  const sel = r.id === S.selected;
+  const hov = r.id === S.hover;
+  // Size repeats the verdict so pins stay readable without color.
+  const base = v === 2 ? 7.5 : v === 1 ? 6.5 : 5;
+  return {
+    radius: base + (sel ? 3 : hov ? 2 : 0),
+    fillColor: pal[vKey(v)],
+    fillOpacity: v == null ? 0.75 : 1,
+    color: sel || hov || r.labeled ? pal.ink : pal.ring,
+    weight: sel ? 3 : hov || r.labeled ? 2 : 1.5,
+    opacity: 1,
   };
 }
 
-// ---- boot ----
-map = L.map("map", { zoomControl: true }).setView([41.49, -81.69], 11);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: "&copy; OpenStreetMap contributors", maxZoom: 19,
-}).addTo(map);
-loadMap();
+function syncMarkers() {
+  if (!map) return;
+  for (const [id, m] of markers) {
+    if (!S.byId.has(id)) { pins.removeLayer(m); markers.delete(id); }
+  }
+  const visible = new Set(S.shown.map(r => r.id));
+  pins.clearLayers();
+  // Draw order puts deals on top of maybes on top of passes where pins overlap.
+  const ordered = S.rows.filter(r => visible.has(r.id) && r.lat != null && r.lng != null)
+    .sort((a, b) => (a.ai_verdict ?? -1) - (b.ai_verdict ?? -1));
+  for (const r of ordered) {
+    let m = markers.get(r.id);
+    if (!m) {
+      m = Leaflet.circleMarker([r.lat, r.lng], { ...markerStyle(r), fid: r.id, bubblingMouseEvents: false });
+      markers.set(r.id, m);
+    } else {
+      m.setLatLng([r.lat, r.lng]);
+      m.setStyle(markerStyle(r));
+    }
+    pins.addLayer(m);
+  }
+}
+
+function restyleMarkers() {
+  for (const [id, m] of markers) {
+    const r = S.byId.get(id);
+    if (r) m.setStyle(markerStyle(r));
+  }
+}
+
+function restyle(id) {
+  const r = S.byId.get(id);
+  const m = markers.get(id);
+  if (r && m) m.setStyle(markerStyle(r));
+}
+
+function insets() {
+  const top = $(".topbar").getBoundingClientRect().bottom;
+  const gap = 12;
+  if (narrow.matches) return { top, left: 0, right: 0, bottom: listPanel.offsetHeight + gap };
+  return {
+    top,
+    left: document.body.classList.contains("list-collapsed") ? 0 : listPanel.offsetWidth + gap,
+    right: document.body.classList.contains("detail-open") ? detailEl.offsetWidth + gap : 0,
+    bottom: 0,
+  };
+}
+
+function fitToShown(animate) {
+  if (!map) return;
+  const pts = S.shown.filter(r => r.lat != null && r.lng != null).map(r => [r.lat, r.lng]);
+  if (!pts.length) return;
+  const i = insets();
+  map.fitBounds(pts, {
+    paddingTopLeft: [i.left + 48, i.top + 48],
+    paddingBottomRight: [i.right + 48, i.bottom + 56],
+    maxZoom: 14,
+    animate: animate && !reduceMotion,
+  });
+}
+
+function revealOnMap(r) {
+  if (!map || r.lat == null || r.lng == null) return;
+  const i = insets();
+  map.panInside([r.lat, r.lng], {
+    paddingTopLeft: [i.left + 56, i.top + 56],
+    paddingBottomRight: [i.right + 56, i.bottom + 64],
+    animate: !reduceMotion,
+  });
+}
+
+const tip = $("#tip");
+const tipEls = {
+  addr: $(".tip-addr", tip), price: $(".tip-price", tip), margin: $(".tip-margin", tip),
+  chip: $(".tip-chip", tip), chipText: $(".tip-chip span", tip), score: $(".tip-score", tip),
+};
+function showTip(id, pt) {
+  const r = S.byId.get(id);
+  if (!r) return;
+  // textContent only: tooltip labels come straight from listing data.
+  tipEls.addr.textContent = r.address ?? "";
+  tipEls.price.textContent = money(r.price);
+  tipEls.margin.textContent = r.margin == null ? "" : `${pct(r.margin)} margin`;
+  tipEls.chip.hidden = !S.hasAI;
+  tipEls.chip.className = `chip tip-chip v-${vKey(r.ai_verdict)}`;
+  tipEls.chipText.textContent = vName(r.ai_verdict);
+  tipEls.score.textContent = r.score == null ? "" : `score ${(+r.score).toFixed(2)}`;
+  tip.hidden = false;
+  const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
+  const x = pt.x + 18 + w > innerWidth - insets().right ? pt.x - 18 - w : pt.x + 18;
+  const y = Math.max(insets().top + 6, pt.y - h - 14);
+  tip.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+}
+function hideTip() { tip.hidden = true; }
+
+// ---------- data ----------
+function setRows(rows) {
+  S.rows = rows;
+  S.byId = new Map(rows.map(r => [r.id, r]));
+  S.hasAI = rows.some(r => "ai_verdict" in r);
+  for (const r of rows) r._hay = `${r.address ?? ""} ${r.city ?? ""} ${r.zip ?? ""}`.toLowerCase();
+  document.body.classList.toggle("no-ai", !S.hasAI);
+  $("#filters").hidden = !S.hasAI;
+  if (!S.hasAI) S.filter = "all";
+  renderSummary();
+}
+
+function computeShown() {
+  const q = S.query.trim().toLowerCase();
+  const keep = FILTERS[S.filter];
+  S.shown = S.rows.filter(r => keep(r) && (!q || r._hay.includes(q))).sort(SORTS[S.sort]);
+}
+
+function refresh({ fit = false, animate = false } = {}) {
+  computeShown();
+  renderCounts();
+  renderList();
+  syncMarkers();
+  if (fit) fitToShown(animate);
+}
+
+function renderSummary() {
+  const n = S.rows.length;
+  let deals = 0, maybes = 0;
+  for (const r of S.rows) { if (r.ai_verdict === 2) deals++; else if (r.ai_verdict === 1) maybes++; }
+  $("#summary").innerHTML = `<span><b class="num">${fmtInt(n)}</b> scored</span>` + (S.hasAI
+    ? `<span><i class="dot v-deal"></i><b class="num">${deals}</b> ${deals === 1 ? "deal" : "deals"}</span><span><i class="dot v-maybe"></i><b class="num">${maybes}</b> maybe</span>`
+    : "");
+}
+
+function renderCounts() {
+  const q = S.query.trim().toLowerCase();
+  const pool = q ? S.rows.filter(r => r._hay.includes(q)) : S.rows;
+  for (const b of $$("#filters [data-f]")) {
+    b.querySelector(".count").textContent = pool.filter(FILTERS[b.dataset.f]).length;
+    b.setAttribute("aria-checked", b.dataset.f === S.filter);
+  }
+  syncLens($("#filters"), false);
+}
+
+function cardHTML(r) {
+  const p = photo(r.thumb);
+  const specs = [r.beds != null && `${fmtNum(r.beds)} bd`, r.baths != null && `${fmtNum(r.baths)} ba`, r.sqft != null && `${fmtInt(r.sqft)} sf`]
+    .filter(Boolean).join(" · ");
+  const sub = [esc(loc(r)), specs].filter(Boolean).join(" · ");
+  const sel = r.id === S.selected;
+  return `<div class="card${sel ? " is-selected" : ""}${r.id === S.hover ? " is-hover" : ""}" role="option" id="c${r.id}" data-id="${r.id}" aria-selected="${sel}">
+  <div class="thumb">${p ? `<img src="${esc(p.mid)}" data-orig="${esc(p.orig)}" alt="" loading="lazy" decoding="async">` : icon("home")}${r.score == null ? "" : `<span class="score-bar" style="--s:${clamp01(r.score).toFixed(3)}" title="Score ${(+r.score).toFixed(2)}"></span>`}</div>
+  <div class="c-body">
+    <div class="c-row"><span class="c-addr">${esc(r.address)}</span><span class="c-price num">${money(r.price)}</span></div>
+    <div class="c-row c-sub"><span class="c-meta">${sub}</span></div>
+    <div class="c-row c-foot">
+      <span class="c-chips">${S.hasAI ? `<span class="chip v-${vKey(r.ai_verdict)}"><i></i>${vName(r.ai_verdict)}</span>` : ""}${VERDICTS[r.my_verdict] ? `<span class="chip ghost" title="Your label">You: ${VERDICTS[r.my_verdict].name}</span>` : ""}${r.red_flag_count ? `<span class="flag" title="${plural(r.red_flag_count, "red flag")}">${icon("flag")}${r.red_flag_count}</span>` : ""}${r.text_conflict ? `<span class="flag conflict" title="Remarks describe a different condition than the photos">${icon("alert")}</span>` : ""}</span>
+      ${r.margin == null ? "" : `<span class="c-margin num ${r.margin >= 0 ? "up" : "down"}" title="Margin after reno, carry and closing">${icon(r.margin >= 0 ? "tri-up" : "tri-down", "fill")}${pct(r.margin)}</span>`}
+    </div>
+  </div>
+</div>`;
+}
+
+// The list renders in chunks: a thousand listings would otherwise put tens of
+// thousands of nodes in the document for rows nobody has scrolled to yet.
+const CHUNK = 120;
+let rendered = 0;
+const more = new IntersectionObserver(entries => {
+  if (entries.some(e => e.isIntersecting)) growList();
+}, { root: listEl, rootMargin: "600px" });
+
+function renderList() {
+  const n = S.shown.length;
+  const total = S.rows.length;
+  $("#listTitle").textContent = n === total ? plural(total, "listing") : `${fmtInt(n)} of ${fmtInt(total)}`;
+  listEl.removeAttribute("aria-activedescendant");
+  more.disconnect();
+  rendered = 0;
+  if (!total) {
+    listEl.innerHTML = emptyHTML("home", "No scored listings yet", "Run <code>py run.py refresh</code> after pulling data from Redfin.");
+    return;
+  }
+  if (!n) {
+    listEl.innerHTML = emptyHTML("search", "Nothing matches", S.query.trim() ? "Try a different address, city or ZIP." : "No listings have this verdict right now.",
+      `<button class="btn" type="button" data-act="reset">Show all listings</button>`);
+    return;
+  }
+  rendered = Math.min(CHUNK, n);
+  listEl.innerHTML = S.shown.slice(0, rendered).map(cardHTML).join("") + `<div class="list-end" aria-hidden="true"></div>`;
+  if (rendered < n) more.observe(listEl.querySelector(".list-end"));
+  if (S.selected != null && document.getElementById("c" + S.selected)) listEl.setAttribute("aria-activedescendant", "c" + S.selected);
+}
+
+function growList(upTo = rendered + CHUNK) {
+  const end = listEl.querySelector(".list-end");
+  if (!end || rendered >= S.shown.length) return;
+  const next = S.shown.slice(rendered, Math.max(upTo, rendered + CHUNK));
+  rendered += next.length;
+  end.insertAdjacentHTML("beforebegin", next.map(cardHTML).join(""));
+  if (rendered >= S.shown.length) { more.disconnect(); end.remove(); }
+}
+
+function patchCard(id) {
+  const card = document.getElementById("c" + id);
+  const r = S.byId.get(id);
+  if (card && r) card.outerHTML = cardHTML(r);
+}
+
+function setHover(id) {
+  if (S.hover === id) return;
+  const prev = S.hover;
+  S.hover = id;
+  for (const x of [prev, id]) {
+    if (x == null) continue;
+    restyle(x);
+    document.getElementById("c" + x)?.classList.toggle("is-hover", x === id);
+  }
+  if (id != null) markers.get(id)?.bringToFront();
+}
+
+function markSelected(prev, id) {
+  for (const x of [prev, id]) {
+    if (x == null) continue;
+    const card = document.getElementById("c" + x);
+    if (card) { card.classList.toggle("is-selected", x === id); card.setAttribute("aria-selected", x === id); }
+    restyle(x);
+  }
+  if (id == null) { listEl.removeAttribute("aria-activedescendant"); return; }
+  markers.get(id)?.bringToFront();
+  const card = document.getElementById("c" + id);
+  if (card) {
+    listEl.setAttribute("aria-activedescendant", card.id);
+    card.scrollIntoView({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+  }
+}
+
+function step(delta) {
+  if (!S.shown.length) return;
+  const i = S.shown.findIndex(r => r.id === S.selected);
+  const j = i < 0 ? (delta > 0 ? 0 : S.shown.length - 1) : Math.max(0, Math.min(S.shown.length - 1, i + delta));
+  if (j >= rendered) growList(j + 1);
+  go(`#/map/${S.shown[j].id}`, true);
+}
+
+function resetFilters() {
+  S.query = "";
+  $("#search").value = "";
+  S.filter = "all";
+  store.set("ff_map_filter", "all");
+  refresh({ fit: true });
+}
+
+// ---------- routing ----------
+function go(hash, replace = false) {
+  if (location.hash === hash) return route();
+  if (replace) { history.replaceState(null, "", hash); route(); }
+  else location.hash = hash;
+}
+
+function route() {
+  const m = /^#\/(map|triage|metrics)(?:\/(\d+))?$/.exec(location.hash);
+  const view = m ? m[1] : "map";
+  setView(view);
+  if (view !== "map") return;
+  const id = m?.[2] ? +m[2] : null;
+  if (id == null) closeDetail();
+  else openDetail(id);
+}
+
+function setView(v) {
+  if (S.view === v) return;
+  S.view = v;
+  document.body.dataset.view = v;
+  for (const a of $$("#nav a")) {
+    if (a.dataset.view === v) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  }
+  syncLens($("#nav"));
+  const onMap = v === "map";
+  triageEl.hidden = v !== "triage";
+  metricsEl.hidden = v !== "metrics";
+  $("#map").inert = !onMap;
+  for (const el of $$(".map-ui")) el.inert = !onMap;
+  detailEl.inert = !onMap || S.selected == null;
+  listPanel.inert = !onMap || document.body.classList.contains("list-collapsed");
+  hideTip();
+  if (v === "triage" && (!T.item || S.byId.get(T.item.id)?.labeled)) loadTriage();
+  if (v === "metrics" && metricsStale) loadMetrics();
+  document.title = onMap ? "FlipFinder" : `${v === "triage" ? "Triage" : "Metrics"} · FlipFinder`;
+}
+
+// ---------- listing detail ----------
+const detailCache = new Map();
+function loadListing(id) {
+  let p = detailCache.get(id);
+  if (p) {
+    detailCache.delete(id);
+    detailCache.set(id, p);
+    return p;
+  }
+  p = api(`/api/listing/${id}`);
+  detailCache.set(id, p);
+  p.catch(() => detailCache.delete(id));
+  // Small LRU: hover prefetch fills it, and nothing large stays alive for long.
+  if (detailCache.size > 24) detailCache.delete(detailCache.keys().next().value);
+  return p;
+}
+
+let detailFor = null;
+let detailClearTimer = 0;
+function openDetail(id) {
+  const prev = S.selected;
+  S.selected = id;
+  if (prev !== id) markSelected(prev, id);
+  clearTimeout(detailClearTimer);
+  document.body.classList.add("detail-open");
+  detailEl.inert = S.view !== "map";
+  const row = S.byId.get(id);
+  if (row) requestAnimationFrame(() => revealOnMap(row));
+  if (detailFor !== id) {
+    detailEl.classList.add("is-loading");
+    if (detailFor == null) detailEl.innerHTML = detailSkeleton();
+  }
+  loadListing(id).then(l => {
+    if (S.selected === id) renderDetail(l);
+  }, err => {
+    if (S.selected !== id) return;
+    detailFor = null;
+    detailEl.classList.remove("is-loading");
+    detailEl.innerHTML = `<div class="d-scroll"><button class="icon-btn d-close" data-act="close" aria-label="Close details">${icon("x")}</button>${emptyHTML("alert", "Couldn't load this listing", esc(err.message), `<button class="btn" type="button" data-act="retry">Try again</button>`)}</div>`;
+  });
+}
+
+function closeDetail() {
+  if (S.selected == null) return;
+  const prev = S.selected;
+  S.selected = null;
+  markSelected(prev, null);
+  document.body.classList.remove("detail-open");
+  detailEl.inert = true;
+  // Drop the closed panel's DOM (and its decoded photos) once the exit animation is done.
+  detailClearTimer = setTimeout(() => { detailEl.replaceChildren(); detailFor = null; }, 400);
+}
+
+const detailSkeleton = () => `<div class="d-scroll"><div class="gallery skel"></div><div class="d-body"><div class="card skel" aria-hidden="true" style="grid-template-columns:1fr"><div class="c-body"><i></i><i></i><i></i></div></div></div></div>`;
+
+function renderDetail(l) {
+  const keepScroll = detailFor === l.id ? detailEl.querySelector(".d-scroll")?.scrollTop ?? 0 : 0;
+  detailFor = l.id;
+  const c = l.components || {};
+  const showAlgo = !S.blind && c.arv != null;
+  detailEl.innerHTML = `<div class="d-scroll">
+    <div class="d-media">
+      ${galleryHTML(l.photos, l.address, "416px")}
+      <button class="icon-btn d-close" type="button" data-act="close" aria-label="Close details (Esc)" title="Close (Esc)">${icon("x")}</button>
+    </div>
+    <div class="d-body">
+      ${headHTML(l)}
+      ${showAlgo ? dealHTML(l, c) : ""}
+      ${aiHTML(l)}
+      <section class="sec"><h3 class="sec-title">Property</h3>${factsHTML(l)}</section>
+      ${showAlgo ? signalsHTML(c) : ""}
+      ${remarksHTML(l)}
+      <section class="sec"><h3 class="sec-title">Your call</h3><div data-slot="label"></div></section>
+    </div>
+  </div>`;
+  detailEl.classList.remove("is-loading");
+  mountGallery(detailEl.querySelector(".gallery"), l);
+  mountRemarks(detailEl);
+  detailEl.querySelector('[data-slot="label"]').append(labelWidget(l, v => onLabelSaved(l.id, v)));
+  if (keepScroll) detailEl.querySelector(".d-scroll").scrollTop = keepScroll;
+}
+
+detailEl.addEventListener("click", e => {
+  const act = e.target.closest("[data-act]")?.dataset.act;
+  if (act === "close") go("#/map");
+  else if (act === "retry" && S.selected != null) { detailFor = null; openDetail(S.selected); }
+});
+
+// ---------- section builders (shared by the detail panel and triage) ----------
+function headHTML(l) {
+  const url = httpsUrl(l.url, "redfin.com");
+  const ai = l.ai_label ? l.ai_label.suggested_verdict : S.byId.get(l.id)?.ai_verdict;
+  const chips = [
+    S.hasAI && !S.blind ? `<span class="chip lg v-${vKey(ai)}"><i></i>${ai == null ? "Not labeled" : `AI: ${vName(ai)}`}</span>` : "",
+    l.label && VERDICTS[l.label.verdict] ? `<span class="chip lg ghost">You: ${VERDICTS[l.label.verdict].name}</span>` : "",
+    S.blind ? `<span class="chip lg ghost">${icon("eye-off")}Blind mode</span>` : "",
+  ].join("");
+  return `<header class="d-head">
+    <div class="d-chips">${chips}</div>
+    <h2 class="d-addr">${esc(l.address)}</h2>
+    <p class="d-sub">${esc(loc(l))}${l.dom != null ? ` · ${plural(l.dom, "day")} on market` : ""}</p>
+    ${url ? `<a class="btn btn-sm" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open on Redfin ${icon("ext")}</a>` : ""}
+  </header>`;
+}
+
+function dealHTML(l, c) {
+  const price = l.price ?? 0;
+  const reno = c.reno_cost ?? 0;
+  const spread = c.spread ?? 0;
+  const carry = c.arv - price - reno - spread;
+  const gain = spread >= 0;
+  const total = gain ? c.arv : price + reno + carry;
+  const grow = v => `flex-grow:${Math.max(v, 0).toFixed(0)}`;
+  const lossLeft = gain ? 0 : (c.arv / total) * 100;
+  return `<section class="sec">
+    <div class="figs">
+      <div class="fig hero"><div class="fig-label">Margin</div><div class="fig-val num">${pct(c.margin)}</div><div class="fig-sub">after reno, carry &amp; closing</div></div>
+      <div class="fig"><div class="fig-label">${gain ? "Spread" : "Shortfall"}</div><div class="fig-val num">${money(spread)}</div><div class="fig-sub">on ARV ${money(c.arv)}</div></div>
+      ${l.score == null ? "" : `<div class="fig"><div class="fig-label">Score</div><div class="fig-val num">${(+l.score).toFixed(2)}</div><div class="fig-sub">rank among scored</div></div>`}
+    </div>
+    <div class="stack" role="img" aria-label="After-repair value ${money(c.arv)}: purchase ${money(price)}, renovation ${money(reno)}, carry and closing ${money(carry)}, ${gain ? "spread" : "shortfall"} ${money(spread)}">
+      <i style="--c:var(--cost-1);${grow(price)}"></i><i style="--c:var(--cost-2);${grow(reno)}"></i><i style="--c:var(--cost-3);${grow(carry)}"></i>${gain ? `<i class="gain" style="${grow(spread)}"></i>` : `<b class="loss" style="left:${lossLeft.toFixed(2)}%"></b>`}
+    </div>
+    <dl class="legend2">
+      <div><dt><i style="--c:var(--cost-1)"></i>Purchase</dt><dd class="num">${money(price)}</dd></div>
+      <div><dt><i style="--c:var(--cost-2)"></i>Reno · ${esc(c.reno_tier ?? "—")}</dt><dd class="num">${money(reno)}</dd></div>
+      <div><dt><i style="--c:var(--cost-3)"></i>Carry &amp; closing</dt><dd class="num">${money(carry)}</dd></div>
+      <div><dt><i style="--c:${gain ? "var(--deal)" : "var(--pass)"}"></i>${gain ? "Spread" : "Over ARV"}</dt><dd class="num">${money(spread)}</dd></div>
+    </dl>
+    ${c.above_tract_p90 ? warnHTML("ARV $/sqft is above the 90th percentile of everything sold in this tract. That usually means a comp mismatch; verify before trusting the spread.") : ""}
+  </section>`;
+}
+
+function meterHTML(label, v, hint) {
+  return `<div class="meter" title="${esc(hint)}"><span class="m-label">${label}</span><span class="m-track"><i style="--v:${clamp01(v).toFixed(3)}"></i></span><span class="m-val num">${v == null ? "—" : (+v).toFixed(2)}</span></div>`;
+}
+
+function signalsHTML(c) {
+  return `<section class="sec">
+    <h3 class="sec-title">Comps &amp; signals<span class="aside num">${plural(c.comp_count ?? 0, "sold comp")}</span></h3>
+    <div class="meters">
+      ${meterHTML("Confidence", c.confidence, "Comp count and $/sqft spread")}
+      ${meterHTML("Liquidity", c.liquidity, "Tract sales pace and days on market")}
+      ${meterHTML("Distress", c.distress, "Remarks keywords, $/sqft discount, age, photo condition")}
+    </div>
+    <p class="sec-note num">Comp $/sqft <b>${c.comp_ppsf ? "$" + fmtInt(c.comp_ppsf) : "—"}</b>${c.tract_p90_ppsf ? ` · tract 90th percentile <b>$${fmtInt(c.tract_p90_ppsf)}</b>` : ""}</p>
+  </section>`;
+}
+
+function aiHTML(l) {
+  if (!("ai_label" in l)) return "";
+  const title = `<h3 class="sec-title">${icon("spark")}AI assessment`;
+  if (S.blind) return `<section class="ai-card">${title}</h3><p class="empty-note">Hidden in blind mode so it can't anchor your call.</p></section>`;
+  const a = l.ai_label;
+  if (!a) return `<section class="ai-card">${title}</h3><p class="empty-note">Not labeled yet. Listings need photos, then <code>py run.py refresh</code>.</p></section>`;
+  const allows = a.margin_ceiling == null ? "" : `Margin allows <b>${vName(a.margin_ceiling)}</b>`;
+  const verdict = !allows ? "" : a.downgrade
+    ? `${allows} — AI downgraded to <b>${vName(a.suggested_verdict)}</b> because ${a.reasons.map(esc).join("; ")}`
+    : allows;
+  return `<section class="ai-card">
+    ${title}<span class="aside">${esc(a.model)} · ${esc(a.prompt_version)}</span></h3>
+    ${verdict ? `<p class="ai-verdict">${verdict}</p>` : ""}
+    ${a.text_conflict ? warnHTML("Remarks describe a different condition than the photos show. Check the listing, not just the photos.") : ""}
+    <div class="ai-grid">
+      <span>Condition</span><span class="cells" role="img" aria-label="Condition ${a.condition} of 10">${Array.from({ length: 10 }, (_, i) => `<i class="${i < a.condition ? "on" : ""}"></i>`).join("")}<b class="num">${a.condition}/10</b></span>
+      <span>Reno scope</span><span><span class="scope">${["light", "medium", "gut"].map(s => `<span class="${s === a.reno_scope ? "on" : ""}">${s}</span>`).join("")}</span></span>
+      ${a.photos_representative ? "" : `<span>Photos</span><span>May not show the whole house</span>`}
+      ${l.condition_source === "human" ? `<span>Your condition</span><span class="num">${fmtInt(l.condition_score)}/10 · used for reno cost</span>` : ""}
+    </div>
+    ${a.red_flags.length ? `<div class="flags">${a.red_flags.map(f => `<span class="chip">${icon("flag")}${esc(f)}</span>`).join("")}</div>` : ""}
+    ${a.notes ? `<p class="ai-notes">${esc(a.notes)}</p>` : ""}
+    <p class="ai-foot">Model output, not a fact.</p>
+  </section>`;
+}
+
+function factsHTML(l) {
+  const rows = [
+    ["Price", money(l.price)],
+    ["$ / sqft", l.ppsf ? "$" + fmtInt(l.ppsf) : "—"],
+    ["Sqft", fmtInt(l.sqft)],
+    ["Beds", fmtNum(l.beds)],
+    ["Baths", fmtNum(l.baths)],
+    ["Built", l.year_built ?? "—"],
+  ];
+  return `<dl class="facts">${rows.map(([k, v]) => `<div><dt>${k}</dt><dd class="num">${esc(v)}</dd></div>`).join("")}</dl>`;
+}
+
+function remarksHTML(l) {
+  if (!l.remarks) return "";
+  return `<section class="sec"><h3 class="sec-title">Listing remarks</h3><p class="remarks clamp">${esc(l.remarks)}</p><button class="link-btn" type="button" data-more hidden>Show more</button></section>`;
+}
+function mountRemarks(root) {
+  const box = root.querySelector(".remarks");
+  if (!box) return;
+  const btn = box.nextElementSibling;
+  requestAnimationFrame(() => { btn.hidden = box.scrollHeight <= box.clientHeight + 2; });
+  btn.addEventListener("click", () => {
+    const clamped = box.classList.toggle("clamp");
+    btn.textContent = clamped ? "Show more" : "Show less";
+  });
+}
+
+// ---------- gallery & viewer ----------
+function galleryHTML(urls, alt, sizes) {
+  const ps = (urls || []).map(photo).filter(Boolean);
+  if (!ps.length) return `<div class="gallery g-empty">${icon("home")}<span>No photos</span></div>`;
+  return `<div class="gallery" data-n="${ps.length}">
+    <div class="g-track" tabindex="0" aria-label="Photos of ${esc(alt)}">${ps.map((p, i) =>
+      `<img src="${esc(p.mid)}" srcset="${esc(p.mid)} 623w, ${esc(p.big)} 1280w" sizes="${sizes}" data-orig="${esc(p.orig)}" alt="${i ? "" : esc(alt)}" ${i ? 'loading="lazy"' : 'fetchpriority="high"'} decoding="async" draggable="false">`).join("")}</div>
+    ${ps.length > 1 ? `<button class="g-btn prev" type="button" data-g="-1" aria-label="Previous photo">${icon("chev-l")}</button><button class="g-btn next" type="button" data-g="1" aria-label="Next photo">${icon("chev-r")}</button>` : ""}
+    <button class="g-count num" type="button" data-g="open" aria-label="Open photos full screen">${icon("expand")}<span>1</span>&thinsp;/&thinsp;${ps.length}</button>
+  </div>`;
+}
+
+// Triage has room for the rest of the roll; condition is judged from the photos.
+function thumbsHTML(urls, alt) {
+  const ps = (urls || []).map(photo).filter(Boolean).slice(1, 7);
+  if (!ps.length) return "";
+  return `<div class="t-thumbs">${ps.map((p, i) =>
+    `<button type="button" data-shot="${i + 1}" aria-label="Photo ${i + 2} of ${esc(alt)}"><img src="${esc(p.mid)}" data-orig="${esc(p.orig)}" alt="" loading="lazy" decoding="async"></button>`).join("")}</div>`;
+}
+
+function mountGallery(g, l) {
+  if (!g || g.classList.contains("g-empty")) return;
+  const track = g.querySelector(".g-track");
+  const counter = g.querySelector(".g-count span");
+  const n = +g.dataset.n;
+  const index = () => Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
+  let raf = 0;
+  track.addEventListener("scroll", () => {
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; counter.textContent = index() + 1; });
+  }, { passive: true });
+  const stepTo = d => {
+    const next = (index() + d + n) % n;
+    track.scrollTo({ left: next * track.clientWidth, behavior: reduceMotion ? "auto" : "smooth" });
+  };
+  g.addEventListener("click", e => {
+    const b = e.target.closest("[data-g]");
+    if (b && b.dataset.g !== "open") return stepTo(+b.dataset.g);
+    if (b || e.target.tagName === "IMG") openViewer(l.photos, index(), b || e.target);
+  });
+  g.step = stepTo;
+}
+
+const viewer = $("#viewer");
+const viewerImg = $("img", viewer);
+const V = { photos: [], i: 0, returnFocus: null };
+function openViewer(urls, i, from) {
+  V.photos = (urls || []).map(photo).filter(Boolean);
+  if (!V.photos.length) return;
+  V.returnFocus = from;
+  viewer.hidden = false;
+  showViewer(i);
+  $(".v-close", viewer).focus();
+}
+function showViewer(i) {
+  const n = V.photos.length;
+  V.i = (i + n) % n;
+  const p = V.photos[V.i];
+  viewerImg.dataset.orig = p.orig;
+  viewerImg.src = p.big;
+  $(".v-count", viewer).textContent = `${V.i + 1} / ${n}`;
+  for (const b of $$(".g-btn", viewer)) b.hidden = n < 2;
+}
+function closeViewer() {
+  viewer.hidden = true;
+  viewerImg.removeAttribute("src");
+  V.returnFocus?.focus?.();
+}
+viewer.addEventListener("click", e => {
+  const b = e.target.closest("[data-v]");
+  if (!b) { if (e.target === viewer) closeViewer(); return; }
+  if (b.dataset.v === "close") closeViewer();
+  else showViewer(V.i + +b.dataset.v);
+});
+
+// ---------- labeling ----------
+function parseTags(raw) {
+  try { const t = JSON.parse(raw ?? "[]"); return Array.isArray(t) ? t : []; } catch { return []; }
+}
+
+function labelWidget(l, onSaved) {
+  const tags = new Set(parseTags(l.label?.tags));
+  // Prefilling with the AI condition in blind mode would leak the suggestion.
+  const initialCond = l.label?.condition_human ?? (!S.blind && l.ai_label ? l.ai_label.condition : null);
+  let cond = initialCond;
+  const el = document.createElement("div");
+  el.className = "labeler";
+  el.innerHTML = `
+    <div class="lb-cond">
+      <div class="lb-cond-head"><b>Condition</b><span>1 gutted · 10 move-in ready</span></div>
+      <div class="cond" role="radiogroup" aria-label="Condition from 1, gutted, to 10, move-in ready">${Array.from({ length: 10 }, (_, i) =>
+        `<button type="button" role="radio" data-cond="${i + 1}" aria-checked="${cond === i + 1}">${i + 1}</button>`).join("")}</div>
+    </div>
+    <div class="vbtns">${VERDICTS.map((v, i) =>
+      `<button type="button" class="vbtn v-${v.key}" data-verdict="${i}" aria-pressed="${l.label?.verdict === i}"><i></i>${v.name}<kbd>${i + 1}</kbd></button>`).join("")}</div>
+    <div class="tags">${TAGS.map(t => `<button type="button" class="tag" data-tag="${esc(t)}" aria-pressed="${tags.has(t)}">${esc(t)}</button>`).join("")}</div>`;
+
+  el.addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.cond) {
+      const n = +b.dataset.cond;
+      cond = cond === n ? null : n;
+      for (const x of el.querySelectorAll("[data-cond]")) x.setAttribute("aria-checked", +x.dataset.cond === cond);
+    } else if (b.dataset.tag) {
+      const t = b.dataset.tag;
+      tags.has(t) ? tags.delete(t) : tags.add(t);
+      b.setAttribute("aria-pressed", tags.has(t));
+    } else if (b.dataset.verdict) {
+      submit(+b.dataset.verdict);
+    }
+  });
+
+  async function submit(verdict) {
+    if (el.classList.contains("is-saving")) return;
+    const btn = el.querySelector(`[data-verdict="${verdict}"]`);
+    const body = { listing_id: l.id, verdict, tags: [...tags], blind: S.blind, ai_label_id: l.ai_label ? l.ai_label.id : null };
+    if (cond !== initialCond && cond !== null) body.condition = cond;
+    el.classList.add("is-saving");
+    btn.classList.add("is-busy");
+    try {
+      await api("/api/labels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    } catch (err) {
+      el.classList.remove("is-saving");
+      btn.classList.remove("is-busy");
+      toast(`Couldn't save the label: ${err.message}`, "error");
+      return;
+    }
+    onSaved(verdict);
+  }
+  el.submit = submit;
+  return el;
+}
+
+function applyLocalLabel(id, verdict) {
+  detailCache.delete(id);
+  const r = S.byId.get(id);
+  if (r) {
+    r.labeled = 1;
+    r.my_verdict = verdict;
+    restyle(id);
+    patchCard(id);
+  }
+  metricsStale = true;
+}
+
+function onLabelSaved(id, verdict) {
+  applyLocalLabel(id, verdict);
+  toast(`Saved as ${VERDICTS[verdict].name}`);
+  if (S.selected === id) openDetail(id);
+}
+
+// ---------- triage ----------
+const T = { item: null, widget: null, session: 0, loading: false };
+
+async function loadTriage() {
+  if (T.loading) return;
+  T.loading = true;
+  triageEl.classList.add("is-loading");
+  try {
+    const l = await api("/api/triage/next");
+    T.item = l.done ? null : l;
+    renderTriage(l);
+  } catch (err) {
+    T.item = null;
+    T.widget = null;
+    triageEl.innerHTML = `<div class="page-inner narrow"><div class="glass strong card-g">${emptyHTML("alert", "Couldn't load the next listing", esc(err.message), `<button class="btn" type="button" data-act="retry">Try again</button>`)}</div></div>`;
+  } finally {
+    T.loading = false;
+    triageEl.classList.remove("is-loading");
+  }
+}
+
+function renderTriage(l) {
+  if (l.done) {
+    T.widget = null;
+    triageEl.innerHTML = `<div class="page-inner narrow"><div class="glass strong card-g">${emptyHTML("check", "Everything is labeled", "Run <code>py run.py refresh</code> after the next Redfin pull for fresh inventory.", `<a class="btn" href="#/map">Back to the map</a>`)}</div></div>`;
+    return;
+  }
+  const c = l.components || {};
+  triageEl.innerHTML = `<div class="page-inner">
+    <div class="t-bar glass">
+      <div class="t-progress"><b class="num">${fmtInt(l.remaining)}</b> unlabeled${T.session ? ` · <b class="num">${T.session}</b> this session` : ""}</div>
+      <label class="switch" title="Hide the algorithm score, deal math and AI suggestion while you decide">
+        <input type="checkbox" id="blindToggle" ${S.blind ? "checked" : ""}><span class="sw" aria-hidden="true"></span>Blind mode
+      </label>
+      <div class="t-keys" aria-hidden="true"><kbd>1</kbd>Pass <kbd>2</kbd>Maybe <kbd>3</kbd>Deal<span class="sep"></span><kbd>←</kbd><kbd>→</kbd>Photos</div>
+    </div>
+    <article class="t-card glass strong">
+      <div class="t-media">${galleryHTML(l.photos, l.address, "(max-width: 980px) 100vw, 620px")}${thumbsHTML(l.photos, l.address)}</div>
+      <div class="t-body">
+        ${headHTML(l)}
+        ${factsHTML(l)}
+        ${!S.blind && c.arv != null ? dealHTML(l, c) : ""}
+        ${aiHTML(l)}
+        ${remarksHTML(l)}
+        <section class="sec"><h3 class="sec-title">Your call</h3><div data-slot="label"></div></section>
+      </div>
+    </article>
+  </div>`;
+  mountGallery(triageEl.querySelector(".gallery"), l);
+  mountRemarks(triageEl);
+  T.widget = labelWidget(l, v => onTriageSaved(l, v));
+  triageEl.querySelector('[data-slot="label"]').append(T.widget);
+  triageEl.scrollTop = 0;
+}
+
+function onTriageSaved(l, verdict) {
+  T.session++;
+  applyLocalLabel(l.id, verdict);
+  if (S.selected === l.id) openDetail(l.id);
+  triageEl.querySelector(".t-card")?.classList.add("leaving");
+  setTimeout(loadTriage, reduceMotion ? 0 : 170);
+}
+
+triageEl.addEventListener("change", e => {
+  if (e.target.id !== "blindToggle") return;
+  S.blind = e.target.checked;
+  store.set("ff_blind", S.blind ? "1" : "0");
+  if (T.item) renderTriage(T.item);
+  if (S.selected != null) { detailFor = null; openDetail(S.selected); }
+});
+triageEl.addEventListener("click", e => {
+  if (e.target.closest('[data-act="retry"]')) return loadTriage();
+  const shot = e.target.closest("[data-shot]");
+  if (shot && T.item) openViewer(T.item.photos, +shot.dataset.shot, shot);
+});
+
+// ---------- metrics ----------
+let metricsStale = true;
+let metricsData = null;
+let lastFit = null;
+
+async function loadMetrics() {
+  metricsEl.classList.add("is-loading");
+  try {
+    metricsData = await api("/api/metrics");
+    metricsStale = false;
+    renderMetrics(metricsData);
+  } catch (err) {
+    if (metricsData) toast(`Couldn't refresh metrics: ${err.message}`, "error");
+    else metricsEl.innerHTML = `<div class="page-inner narrow"><div class="glass strong card-g">${emptyHTML("alert", "Couldn't load metrics", esc(err.message), `<button class="btn" type="button" data-act="retry">Try again</button>`)}</div></div>`;
+  } finally {
+    metricsEl.classList.remove("is-loading");
+  }
+}
+
+const kpiHTML = (label, value, sub) => `<section class="kpi glass"><div class="k-label">${label}</div><div class="k-val${value === "—" ? " nil" : ""}">${value}</div>${sub}</section>`;
+const rate = v => v == null ? "—" : `${Math.round(v * 100)}%`;
+const fixed = (v, d = 2) => v == null ? "—" : (+v).toFixed(d);
+
+function renderMetrics(m) {
+  const lb = m.labels;
+  const labelsSub = lb.total
+    ? `<div class="stackbar" role="img" aria-label="${lb.pass} pass, ${lb.maybe} maybe, ${lb.deal} deal">${[["pass", lb.pass], ["maybe", lb.maybe], ["deal", lb.deal]].filter(([, n]) => n).map(([k, n]) => `<i class="v-${k}" style="flex-grow:${n}"></i>`).join("")}</div>
+       <div class="mini-legend"><span><i class="dot v-pass"></i>${lb.pass} pass</span><span><i class="dot v-maybe"></i>${lb.maybe} maybe</span><span><i class="dot v-deal"></i>${lb.deal} deal</span></div>`
+    : `<div class="k-sub">Label listings in <a href="#/triage">Triage</a> to train the scorer</div>`;
+  metricsEl.innerHTML = `<div class="page-inner">
+    <header class="page-head">
+      <h1>Metrics</h1>
+      <p>How the scorer and the AI line up with your labels. Your labels are the only ground truth; AI suggestions are never trained on.</p>
+    </header>
+    <div class="kpis">
+      ${kpiHTML("Labels", fmtInt(lb.total), labelsSub)}
+      ${kpiHTML("Holdout Spearman ρ", fixed(m.holdout_spearman), `<div class="k-sub">Score rank vs. your verdicts on labels the fitter never sees</div>`)}
+      ${kpiHTML("Holdout precision@20", rate(m.holdout_p20), `<div class="k-sub">Top 20 by score that you rated Maybe or Deal</div>`)}
+      ${kpiHTML("Scorer", m.scorer_version ? `v${m.scorer_version}` : "Default", `<div class="k-sub">${m.scorer_version ? "Promoted fitted weights" : "Config weights, not fitted yet"} · ${plural(m.scored_listings, "scored listing")}</div>`)}
+    </div>
+    <div class="bento">
+      ${weightsHTML(m)}
+      ${m.ai_agreement ? agreementHTML(m.ai_agreement) : ""}
+      ${disagreeHTML("Algo likes it, you passed", "Score of 0.75 or more, labeled Pass", m.disagreements.algo_likes_you_pass)}
+      ${disagreeHTML("You like it, algo is cold", "Score of 0.40 or less, labeled Deal", m.disagreements.you_like_algo_cold)}
+      ${versionsHTML(m.recent_versions)}
+    </div>
+  </div>`;
+}
+
+function weightsHTML(m) {
+  const max = 3;
+  return `<section class="card-g glass">
+    <div class="cg-head">
+      <div><h2>Score weights</h2><p>Exponents in the multiplicative score. Refit tunes them to your train labels and promotes only if the holdout holds up.</p></div>
+      <button class="btn btn-primary" type="button" data-act="fit">${icon("refresh")}Refit</button>
+    </div>
+    <div class="bars">${Object.entries(m.weights).map(([k, v]) =>
+      `<div class="bar-row"><span class="b-label">${esc(k)}</span><span class="b-track"><i style="--v:${clamp01(v / max).toFixed(3)}"></i></span><span class="b-val num">${fixed(v)}</span></div>`).join("")}
+      <div class="b-axis" aria-hidden="true"><span></span><span><span>0</span><span>1</span><span>2</span><span>3</span></span><span></span></div>
+    </div>
+    <div data-slot="fit">${lastFit ? fitHTML(lastFit) : ""}</div>
+  </section>`;
+}
+
+function fitHTML(out) {
+  const ok = out.promoted;
+  const keys = out.new_weights ? Object.keys(out.new_weights) : [];
+  return `<div class="fit">
+    <div class="fit-head badge ${ok ? "v-deal" : "v-maybe"}">${icon(ok ? "check" : "alert")}${ok ? `Promoted v${out.version}` : "Not promoted"}</div>
+    <p>${esc(out.note)}</p>
+    ${out.train_n != null ? `<p class="sec-note num">train n ${out.train_n} · holdout n ${out.holdout_n} · train ρ ${fixed(out.train_spearman, 3)} · holdout ρ ${fixed(out.holdout_spearman, 3)} · p@20 ${fixed(out.holdout_p20, 3)}</p>` : ""}
+    ${keys.length ? `<table class="tbl"><thead><tr><th>Weight</th><th class="num">Before</th><th class="num">After</th></tr></thead><tbody>${keys.map(k =>
+      `<tr><td>${esc(k)}</td><td class="num">${fixed(out.old_weights?.[k], 3)}</td><td class="num strong">${fixed(out.new_weights[k], 3)}</td></tr>`).join("")}</tbody></table>` : ""}
+  </div>`;
+}
+
+function agreementHTML(ai) {
+  const max = Math.max(1, ...ai.confusion.flat());
+  const stat = (label, value, sub) => `<div class="stat"><div class="s-label">${label}</div><div class="s-val num${value === "—" ? " nil" : ""}">${value}</div><div class="s-sub">${sub}</div></div>`;
+  return `<section class="card-g glass">
+    <div class="cg-head"><div><h2>AI suggestions vs. your labels</h2><p>Shown and blind are split: high agreement on shown labels alone can just be anchoring.</p></div></div>
+    <div class="agree">
+      ${stat("Agreement", rate(ai.verdict_agreement), `n = ${ai.n}`)}
+      ${stat("Shown", rate(ai.shown.verdict_agreement), `n = ${ai.shown.n}`)}
+      ${stat("Blind", rate(ai.blind.verdict_agreement), `n = ${ai.blind.n}`)}
+      ${stat("Condition fixes", fmtInt(ai.condition_corrections), ai.condition_mae == null ? "none yet" : `mean |AI − you| ${ai.condition_mae}`)}
+    </div>
+    <table class="matrix">
+      <caption>Rows: AI suggested · columns: your verdict · diagonal: agreement</caption>
+      <thead><tr><th></th>${VERDICTS.map(v => `<th scope="col">${v.name}</th>`).join("")}</tr></thead>
+      <tbody>${ai.confusion.map((row, i) => `<tr><th scope="row">${VERDICTS[i].name}</th>${row.map((n, j) => {
+        const t = n / max;
+        return `<td class="num${i === j ? " diag" : ""}${t > 0.6 ? " hi" : ""}" style="--t:${Math.round(t * 85)}%">${n}</td>`;
+      }).join("")}</tr>`).join("")}</tbody>
+    </table>
+  </section>`;
+}
+
+function disagreeHTML(title, sub, rows) {
+  return `<section class="card-g glass">
+    <div class="cg-head"><div><h2>${title}</h2><p>${sub}</p></div></div>
+    ${rows.length ? `<ul class="dlist">${rows.map(r =>
+      `<li><a href="#/map/${Number(r.listing_id)}"><span class="dl-addr">${esc(r.address)}</span><span class="num">${money(r.price)}</span><span class="num dl-score">${fixed(r.score)}</span></a></li>`).join("")}</ul>`
+      : `<p class="empty-note">None yet.</p>`}
+  </section>`;
+}
+
+function versionsHTML(vs) {
+  return `<section class="card-g glass wide">
+    <div class="cg-head"><div><h2>Scorer versions</h2><p>Every refit is recorded, promoted or not.</p></div></div>
+    ${vs.length ? `<table class="tbl"><thead><tr><th>Version</th><th class="num">Train n</th><th class="num">Holdout ρ</th><th class="num">p@20</th><th>Status</th><th>Note</th></tr></thead><tbody>${vs.map(v =>
+      `<tr><td class="strong">v${v.version}</td><td class="num">${fmtInt(v.train_n)}</td><td class="num">${fixed(v.holdout_spearman, 3)}</td><td class="num">${fixed(v.holdout_p20, 3)}</td><td><span class="badge ${v.promoted ? "v-deal" : "v-none"}">${icon(v.promoted ? "check" : "minus")}${v.promoted ? "Promoted" : "Rejected"}</span></td><td>${esc(v.note)}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="empty-note">No refits yet. Refit needs at least 20 train labels.</p>`}
+  </section>`;
+}
+
+metricsEl.addEventListener("click", async e => {
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  if (b.dataset.act === "retry") return loadMetrics();
+  if (b.dataset.act !== "fit") return;
+  b.disabled = true;
+  b.classList.add("is-busy");
+  try {
+    lastFit = await api("/api/fit", { method: "POST" });
+    toast(lastFit.promoted ? `Promoted scorer v${lastFit.version}` : "Refit finished, not promoted", lastFit.promoted ? "ok" : "error");
+    if (lastFit.promoted) await reloadListings();
+    await loadMetrics();
+  } catch (err) {
+    toast(`Refit failed: ${err.message}`, "error");
+    b.disabled = false;
+    b.classList.remove("is-busy");
+  }
+});
+
+async function reloadListings() {
+  detailCache.clear();
+  setRows(await api("/api/listings"));
+  refresh();
+  if (S.selected != null) { detailFor = null; openDetail(S.selected); }
+}
+
+// ---------- wiring ----------
+listEl.addEventListener("click", e => {
+  const card = e.target.closest(".card[data-id]");
+  if (card) return go(`#/map/${card.dataset.id}`);
+  if (e.target.closest('[data-act="reset"]')) resetFilters();
+  if (e.target.closest('[data-act="reload"]')) location.reload();
+});
+let prefetchTimer = 0;
+listEl.addEventListener("pointerover", e => {
+  const card = e.target.closest(".card[data-id]");
+  const id = card ? +card.dataset.id : null;
+  if (id === S.hover) return;
+  setHover(id);
+  clearTimeout(prefetchTimer);
+  // Warm the detail request while the pointer rests, so a click opens instantly.
+  if (id != null) prefetchTimer = setTimeout(() => loadListing(id).catch(() => {}), 120);
+});
+listEl.addEventListener("pointerleave", () => { clearTimeout(prefetchTimer); setHover(null); });
+listEl.addEventListener("keydown", e => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); step(e.key === "ArrowDown" ? 1 : -1); }
+  else if (e.key === "Enter" && S.selected == null && S.shown.length) go(`#/map/${S.shown[0].id}`);
+});
+
+const searchEl = $("#search");
+let searchRaf = 0;
+searchEl.addEventListener("input", () => {
+  cancelAnimationFrame(searchRaf);
+  searchRaf = requestAnimationFrame(() => { S.query = searchEl.value; refresh(); });
+});
+searchEl.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    e.stopPropagation();
+    if (searchEl.value) { searchEl.value = ""; S.query = ""; refresh(); }
+    else searchEl.blur();
+  } else if (e.key === "Enter" && S.shown.length) {
+    go(`#/map/${S.shown[0].id}`);
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    listEl.focus();
+    step(1);
+  }
+});
+
+const filtersEl = $("#filters");
+function setFilter(f) {
+  if (f === S.filter) return;
+  S.filter = f;
+  store.set("ff_map_filter", f);
+  refresh({ fit: true, animate: true });
+  syncLens(filtersEl);
+}
+filtersEl.addEventListener("click", e => {
+  const b = e.target.closest("[data-f]");
+  if (b) setFilter(b.dataset.f);
+});
+filtersEl.addEventListener("keydown", e => {
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  const keys = Object.keys(FILTERS);
+  const next = keys[(keys.indexOf(S.filter) + (e.key === "ArrowRight" ? 1 : keys.length - 1)) % keys.length];
+  setFilter(next);
+  filtersEl.querySelector(`[data-f="${next}"]`).focus();
+});
+
+const sortEl = $("#sort");
+sortEl.value = S.sort;
+sortEl.addEventListener("change", () => {
+  S.sort = sortEl.value;
+  store.set("ff_sort", S.sort);
+  refresh();
+  listEl.scrollTop = 0;
+});
+
+const listToggle = $("#listToggle");
+function setListOpen(open, persist) {
+  document.body.classList.toggle("list-collapsed", !open);
+  listToggle.setAttribute("aria-pressed", open);
+  listToggle.setAttribute("aria-label", open ? "Hide listing panel" : "Show listing panel");
+  listPanel.inert = !open || S.view !== "map";
+  if (persist) store.set("ff_list", open ? "1" : "0");
+}
+listToggle.addEventListener("click", () => setListOpen(document.body.classList.contains("list-collapsed"), true));
+
+$(".map-ctl").addEventListener("click", e => {
+  const b = e.target.closest("[data-map]");
+  if (!b || !map) return;
+  if (b.dataset.map === "in") map.zoomIn();
+  else if (b.dataset.map === "out") map.zoomOut();
+  else fitToShown(true);
+});
+
+document.addEventListener("keydown", e => {
+  if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!viewer.hidden) {
+    if (e.key === "Escape") closeViewer();
+    else if (e.key === "ArrowLeft" || e.key === "ArrowRight") showViewer(V.i + (e.key === "ArrowRight" ? 1 : -1));
+    return;
+  }
+  if (e.target.closest("input, select, textarea, [contenteditable]")) return;
+  const arrow = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0;
+  if (S.view === "map") {
+    if (e.key === "Escape" && S.selected != null) go("#/map");
+    else if (e.key === "/") { e.preventDefault(); if (document.body.classList.contains("list-collapsed")) setListOpen(true, true); searchEl.focus(); }
+    else if (e.key === "j" || e.key === "k") step(e.key === "j" ? 1 : -1);
+    else if (e.key === "l" || e.key === "L") setListOpen(document.body.classList.contains("list-collapsed"), true);
+    else if (arrow && S.selected != null && !e.target.closest("#map")) detailEl.querySelector(".gallery")?.step?.(arrow);
+  } else if (S.view === "triage" && T.widget) {
+    if (e.key === "1" || e.key === "2" || e.key === "3") { e.preventDefault(); T.widget.submit(+e.key - 1); }
+    else if (arrow) triageEl.querySelector(".gallery")?.step?.(arrow);
+  }
+});
+
+let resizeRaf = 0;
+addEventListener("resize", () => {
+  cancelAnimationFrame(resizeRaf);
+  resizeRaf = requestAnimationFrame(() => { syncLens($("#nav"), false); syncLens(filtersEl, false); });
+});
+addEventListener("hashchange", route);
+
+// ---------- boot ----------
+readPalette();
+applyTheme(theme(), false);
+setListOpen(store.get("ff_list") !== "0", false);
+initMap();
+route();
+syncLens($("#nav"), false);
+try {
+  setRows(await window.ffListings);
+  refresh({ fit: true });
+  if (S.selected != null) {
+    markSelected(null, S.selected);
+    const r = S.byId.get(S.selected);
+    if (r) revealOnMap(r);
+  }
+} catch (err) {
+  listEl.innerHTML = emptyHTML("alert", "Can't reach the FlipFinder server", `Start it with <code>py run.py serve</code>, then retry. (${esc(err.message)})`,
+    `<button class="btn" type="button" data-act="reload">Retry</button>`);
+}
 </script>
 </body>
 </html>
