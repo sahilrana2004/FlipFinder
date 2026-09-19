@@ -4,3 +4,5 @@ requests
 pyyaml
 numpy
 scipy
+lightgbm==4.6.0
+scikit-learn==1.8.0

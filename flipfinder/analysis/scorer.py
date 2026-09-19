@@ -115,6 +115,7 @@ def score_all(conn, cfg, weights=None, version=None):
                       "reno_tier": est["reno_tier"], "spread": est["spread"],
                       "comp_count": est["comp_count"],
                       "comp_ppsf": est["comp_ppsf"],
+                      "arv_ppsf": est["arv_ppsf"],
                       "tract_p90_ppsf": est["tract_p90_ppsf"],
                       "above_tract_p90": est["above_tract_p90"]}
         conn.execute(

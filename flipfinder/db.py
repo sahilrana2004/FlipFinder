@@ -139,6 +139,18 @@ ADDED_COLUMNS = {
     "ai_labels": [
         ("downgrade", "INTEGER"),            # v4+: one step below the margin ceiling
     ],
+    # Texas doesn't disclose sale prices: the CSV's sold PRICE is the last asking
+    # price. The real close price comes from the detail page's MLS ratio fields.
+    "sold": [
+        ("list_price", "REAL"),              # last asking price before the sale
+        ("list_price_source", "TEXT"),       # how list_price was extracted
+        ("close_price", "REAL"),             # what it actually closed for
+        ("close_price_source", "TEXT"),
+        ("remarks", "TEXT"),                 # agent remarks from the sold listing
+        ("lot_sqft", "REAL"),
+        ("dom", "INTEGER"),
+        ("detail_fetched", "TEXT"),          # set once the detail page was scraped
+    ],
 }
 
 

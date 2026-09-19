@@ -22,7 +22,7 @@ def _haversine_miles(lat1, lng1, lat2, lng2):
 # so the unit designator in the address is the only signal available here.
 ATTACHED_SOLD = "AND address NOT LIKE '% unit %' AND address NOT LIKE '% apt %'"
 
-COMP_FIELDS = "ppsf, lat, lng, url, address, sold_date, sqft, year_built, beds"
+COMP_FIELDS = "ppsf, lat, lng, url, address, sold_date, sqft, year_built, beds, close_price"
 
 
 def _normalize_address(addr):
@@ -172,13 +172,17 @@ def _reno_tier(listing):
 
 
 def estimate(conn, cfg, listing, as_of=None, exclude_url=None):
+    """ARV is the AVM's price for this house in renovated condition (see avm.py);
+    the comps still set confidence and the tract-p90 guard."""
+    from . import avm
+
     rows = comp_rows(conn, listing, as_of=as_of, exclude_url=exclude_url)
     n = len(rows)
     if n == 0:
         return None
     s = cfg["scoring"]
     ppsf = comp_ppsf(listing, rows, s["arv_percentile"], s["arv_weighted"], as_of=as_of)
-    arv = ppsf * listing["sqft"]
+    arv, _ = avm.predict_arv(conn, listing, as_of=as_of, exclude_url=exclude_url)
 
     ppsfs = [r["ppsf"] for r in rows]
     arr = np.array(ppsfs)
@@ -186,7 +190,8 @@ def estimate(conn, cfg, listing, as_of=None, exclude_url=None):
     confidence = min(1.0, n / 5.0) * max(0.0, 1.0 - cv / 0.35)
 
     p90 = tract_ppsf_p90(conn, listing["tract"])
-    above_tract_p90 = bool(p90 and ppsf > p90)
+    arv_ppsf = arv / listing["sqft"]
+    above_tract_p90 = bool(p90 and arv_ppsf > p90)
 
     tier = _reno_tier(listing)
     reno_cost = cfg["reno_cost_per_sqft"][tier] * listing["sqft"]
@@ -201,6 +206,7 @@ def estimate(conn, cfg, listing, as_of=None, exclude_url=None):
         "confidence": confidence,
         "comp_count": n,
         "comp_ppsf": ppsf,
+        "arv_ppsf": arv_ppsf,
         "tract_p90_ppsf": p90,
         "above_tract_p90": above_tract_p90,
     }

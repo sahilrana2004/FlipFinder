@@ -64,3 +64,20 @@ def enrich(conn, cfg):
             failed += 1
         time.sleep(e["delay_seconds"])
     return done, failed
+
+
+def import_sold_details(conn, items):
+    """Apply sold detail-page results (scripts/redfin_fetch.js, sold_detail_*.json).
+    A later scrape of the same sale overwrites an earlier one."""
+    n = 0
+    for item in items:
+        cur = conn.execute(
+            """UPDATE sold SET list_price=?, list_price_source=?, close_price=?,
+                 close_price_source=?, remarks=?, detail_fetched=CURRENT_TIMESTAMP
+               WHERE url=?""",
+            (item.get("list_price"), item.get("list_price_source"), item.get("close_price"),
+             item.get("close_price_source"), item.get("remarks") or None, item["url"]),
+        )
+        n += cur.rowcount
+    conn.commit()
+    return n

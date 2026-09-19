@@ -171,13 +171,15 @@ def upsert_sold_rows(conn, rows):
         conn.execute(
             """INSERT INTO sold
                (url, address, city, zip, price, sold_date, beds, baths, sqft,
-                year_built, ppsf, lat, lng)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                year_built, ppsf, lat, lng, lot_sqft, dom)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(url) DO UPDATE SET
-                 price=excluded.price, sold_date=excluded.sold_date""",
+                 price=excluded.price, sold_date=excluded.sold_date,
+                 lot_sqft=COALESCE(excluded.lot_sqft, sold.lot_sqft),
+                 dom=COALESCE(excluded.dom, sold.dom)""",
             (d["url"], d["address"], d["city"], d["zip"], d["price"], sold_date,
              d["beds"], d["baths"], d["sqft"], d["year_built"], d["ppsf"],
-             d["lat"], d["lng"]),
+             d["lat"], d["lng"], d["lot_sqft"], d["dom"]),
         )
         kept += 1
     conn.commit()
