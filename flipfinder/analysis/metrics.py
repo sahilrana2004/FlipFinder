@@ -5,6 +5,41 @@ from scipy.stats import spearmanr
 from ..db import current_weights
 
 
+def _rate(pairs):
+    return round(sum(1 for ai, human in pairs if ai == human) / len(pairs), 3) if pairs else None
+
+
+def ai_agreement(conn):
+    """How often the human verdict matches the AI suggestion. The human label is
+    the truth side of every comparison; shown vs blind is split out because a
+    high agreement rate on shown labels alone may just be anchoring."""
+    rows = conn.execute(
+        """SELECT l.verdict, l.ai_shown, l.condition_human,
+                  a.suggested_verdict, a.condition
+           FROM labels l JOIN ai_labels a ON a.id = l.ai_label_id"""
+    ).fetchall()
+    pairs = [(r["suggested_verdict"], r["verdict"]) for r in rows]
+    shown = [(r["suggested_verdict"], r["verdict"]) for r in rows if r["ai_shown"]]
+    blind = [(r["suggested_verdict"], r["verdict"]) for r in rows if not r["ai_shown"]]
+    confusion = [[0, 0, 0] for _ in range(3)]  # [ai_suggested][human_verdict]
+    for ai, human in pairs:
+        confusion[ai][human] += 1
+    diffs = [
+        abs(r["condition_human"] - r["condition"])
+        for r in rows
+        if r["condition_human"] is not None and r["condition_human"] != r["condition"]
+    ]
+    return {
+        "n": len(rows),
+        "verdict_agreement": _rate(pairs),
+        "shown": {"n": len(shown), "verdict_agreement": _rate(shown)},
+        "blind": {"n": len(blind), "verdict_agreement": _rate(blind)},
+        "confusion": confusion,
+        "condition_corrections": len(diffs),
+        "condition_mae": round(float(np.mean(diffs)), 2) if diffs else None,
+    }
+
+
 def summary(conn, cfg):
     version, weights = current_weights(conn, cfg)
     counts = {
@@ -74,4 +109,5 @@ def summary(conn, cfg):
             "you_like_algo_cold": you_like_algo_cold,
         },
         "recent_versions": versions,
+        "ai_agreement": ai_agreement(conn),
     }

@@ -65,8 +65,8 @@ fitting:
 
 ollama:
   url: "http://localhost:11434"
-  model: "qwen2.5vl:7b"
-  photos_per_listing: 3
+  model: "qwen3.5:9b"
+  photos_per_listing: 4
 
 census:
   acs_year: 2023
