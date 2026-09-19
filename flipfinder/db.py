@@ -89,6 +89,28 @@ CREATE TABLE IF NOT EXISTS scorer_versions (
   ts TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Model suggestions only. Human labels in `labels` stay the sole ground truth for
+-- fitting and metrics; training on these would teach the scorer the model.
+CREATE TABLE IF NOT EXISTS ai_labels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  listing_id INTEGER,
+  model TEXT,
+  prompt_version TEXT,
+  condition INTEGER,            -- 1-10, what the photos show
+  reno_scope TEXT,              -- light | medium | gut
+  red_flags TEXT,               -- JSON array
+  photos_representative INTEGER,
+  text_conflict INTEGER,        -- remarks describe a materially different condition
+  suggested_verdict INTEGER,    -- 0=pass 1=maybe 2=deal; from v4, derived from margin + downgrade
+  reasons TEXT,                 -- JSON array, <= 3
+  notes TEXT,
+  photo_count INTEGER,
+  seconds REAL,
+  raw_response TEXT,
+  ts TEXT DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (listing_id, model, prompt_version)
+);
+
 CREATE INDEX IF NOT EXISTS idx_sold_tract ON sold(tract);
 CREATE INDEX IF NOT EXISTS idx_listings_tract ON listings(tract);
 """
@@ -102,9 +124,36 @@ def connect():
     return conn
 
 
+# CREATE TABLE IF NOT EXISTS never alters an existing table, so columns added after
+# a DB was created are applied here, only when missing.
+ADDED_COLUMNS = {
+    "labels": [
+        ("ai_label_id", "INTEGER"),
+        ("ai_shown", "INTEGER DEFAULT 0"),   # anchoring: was the AI suggestion visible
+        ("condition_human", "INTEGER"),
+    ],
+    "listings": [
+        ("condition_source", "TEXT"),        # 'ai' | 'human' | NULL
+        ("reno_scope", "TEXT"),              # light | medium | gut, from the AI label
+    ],
+    "ai_labels": [
+        ("downgrade", "INTEGER"),            # v4+: one step below the margin ceiling
+    ],
+}
+
+
+def _migrate(conn):
+    for table, cols in ADDED_COLUMNS.items():
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in cols:
+            if name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
 def init_db():
     conn = connect()
     conn.executescript(SCHEMA)
+    _migrate(conn)
     conn.commit()
     return conn
 

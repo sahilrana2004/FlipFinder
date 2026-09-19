@@ -156,6 +156,10 @@ def tract_ppsf_p90(conn, tract):
 
 
 def _reno_tier(listing):
+    # Photos flatter; the AI's reno_scope also reads the remarks. A human-corrected
+    # condition still wins, since the scope was judged alongside the AI's condition.
+    if listing["reno_scope"] and listing["condition_source"] != "human":
+        return listing["reno_scope"]
     cond = listing["condition_score"]
     if cond is not None:
         if cond <= 3:

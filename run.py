@@ -82,8 +82,54 @@ def cmd_import(conn, _cfg):
 def cmd_enrich(conn, cfg):
     done, failed = redfin_detail.enrich(conn, cfg)
     print(f"[enrich] remarks+photos: {done} ok, {failed} failed")
-    scored, note = photos.score_all(conn, cfg)
-    print(f"[photos] condition scored: {scored} ({note})")
+    print("[enrich] AI labeling needs scores: run `py run.py refresh`")
+
+
+def _label(conn, cfg):
+    """Label every eligible listing. Returns (labeled, failed, no_photos). Ollama is
+    only required when something is eligible, so a refresh with nothing new never
+    touches the model."""
+    no_photos = conn.execute(
+        "SELECT COUNT(*) c FROM scores s WHERE NOT EXISTS "
+        "(SELECT 1 FROM photos p WHERE p.listing_id = s.listing_id)"
+    ).fetchone()["c"]
+    pending = len(photos.eligible(conn, cfg))
+    print(f'[ailabel] model {cfg["ollama"]["model"]}, prompt {photos.PROMPT_VERSION}; '
+          f"{pending} to label, {no_photos} scored listings skipped (no photos)")
+    if not pending:
+        return 0, 0, no_photos
+    if not photos.ollama_available(cfg):
+        print(f'[ailabel] Ollama not reachable at {cfg["ollama"]["url"]}')
+        raise SystemExit(1)
+    labeled = failed = 0
+    elapsed = 0.0
+    for i, total, listing, result in photos.label_all(conn, cfg):
+        if result is None:
+            failed += 1
+            print(f"[ailabel] {i}/{total} {listing['address']}: FAILED (see {photos.FAILURE_LOG})")
+            continue
+        labeled += 1
+        elapsed += result["seconds"]
+        eta = elapsed / labeled * (total - i)
+        flags = " downgrade" if result["downgrade"] else ""
+        flags += " text_conflict" if result["text_conflict"] else ""
+        print(f"[ailabel] {i}/{total} {listing['address']}: {result['seconds']:.0f}s "
+              f"condition {result['condition']} {result['reno_scope']}{flags} "
+              f"(ETA {eta / 60:.1f} min)")
+    print(f"[ailabel] {labeled} labeled, {failed} failed")
+    return labeled, failed, no_photos
+
+
+def _refresh_verdicts(conn, cfg):
+    n = photos.refresh_verdicts(conn, cfg)
+    print(f"[ailabel] verdicts refreshed from current margins: {n}")
+
+
+def cmd_ailabel(conn, cfg):
+    labeled, _, _ = _label(conn, cfg)
+    if labeled:
+        cmd_score(conn, cfg)
+    _refresh_verdicts(conn, cfg)
 
 
 def cmd_census(conn, cfg):
@@ -126,6 +172,7 @@ COMMANDS = {
     "ingest": cmd_ingest,
     "import": cmd_import,
     "enrich": cmd_enrich,
+    "ailabel": cmd_ailabel,
     "census": cmd_census,
     "score": cmd_score,
     "fit": cmd_fit,
@@ -134,13 +181,34 @@ COMMANDS = {
 }
 
 
-def cmd_pipeline(conn, cfg):
-    """Import browser-fetched data, then enrich and score it."""
-    for step in ("import", "census", "score"):
-        COMMANDS[step](conn, cfg)
+def cmd_refresh(conn, cfg):
+    """Import browser-fetched data, score it, AI-label anything new, then re-score
+    so the labels' reno scopes flow into margins and verdicts."""
+    cmd_import(conn, cfg)
+    cmd_census(conn, cfg)
+    cmd_score(conn, cfg)
+    labeled, failed, no_photos = _label(conn, cfg)
+    cmd_score(conn, cfg)
+    _refresh_verdicts(conn, cfg)
+
+    active = conn.execute("SELECT COUNT(*) c FROM listings WHERE active=1").fetchone()["c"]
+    scored = conn.execute("SELECT COUNT(*) c FROM scores").fetchone()["c"]
+    counts = {name: 0 for name in photos.VERDICT_NAMES}
+    for r in conn.execute(
+        """SELECT a.suggested_verdict FROM ai_labels a
+           JOIN scores s ON s.listing_id = a.listing_id
+           WHERE a.model = ? AND a.prompt_version = ?""",
+        (cfg["ollama"]["model"], photos.PROMPT_VERSION),
+    ):
+        counts[photos.VERDICT_NAMES[r["suggested_verdict"]]] += 1
+    print(f"[refresh] active {active}, scored {scored}, labeled this run {labeled}, "
+          f"skipped (no photos) {no_photos}, failed {failed}")
+    print(f"[refresh] AI verdicts: deal {counts['deal']}, maybe {counts['maybe']}, "
+          f"pass {counts['pass']}")
 
 
-COMMANDS["pipeline"] = cmd_pipeline
+COMMANDS["refresh"] = cmd_refresh
+COMMANDS["pipeline"] = cmd_refresh
 
 
 def main():
