@@ -58,10 +58,12 @@ def _listing_payload(conn, cfg, row):
     score = conn.execute(
         "SELECT * FROM scores WHERE listing_id=?", (row["id"],)
     ).fetchone()
+    # rowid is Redfin's photo order; without ORDER BY the primary key index
+    # returns them sorted by URL, so the "first" photo was arbitrary.
     photos = [
         r["url"]
         for r in conn.execute(
-            "SELECT url FROM photos WHERE listing_id=? LIMIT 6", (row["id"],)
+            "SELECT url FROM photos WHERE listing_id=? ORDER BY rowid LIMIT 6", (row["id"],)
         )
     ]
     label = conn.execute(
@@ -104,15 +106,19 @@ def index():
 
 @app.get("/api/listings")
 def listings():
+    """Everything the map pins and the ranked list render, so browsing never
+    needs a request per listing. thumb is the first photo in Redfin's order."""
     cfg = load_config()
     conn = connect()
     rows = conn.execute(
-        """SELECT l.id, l.address, l.price, l.beds, l.baths, l.sqft, l.year_built,
-                  l.dom, l.lat, l.lng, s.score, s.margin,
+        """SELECT l.id, l.address, l.city, l.zip, l.price, l.beds, l.baths, l.sqft,
+                  l.year_built, l.dom, l.lat, l.lng, s.score, s.margin, s.spread, s.arv,
                   l.condition_score AS condition, l.reno_scope,
                   a.downgrade, json_array_length(a.red_flags) AS red_flag_count,
                   a.text_conflict,
-                  (SELECT COUNT(*) FROM labels WHERE listing_id=l.id) labeled
+                  (SELECT url FROM photos p WHERE p.listing_id=l.id ORDER BY p.rowid LIMIT 1) thumb,
+                  (SELECT COUNT(*) FROM labels WHERE listing_id=l.id) labeled,
+                  (SELECT verdict FROM labels WHERE listing_id=l.id) my_verdict
            FROM listings l JOIN scores s ON s.listing_id=l.id
            LEFT JOIN ai_labels a ON a.listing_id=l.id AND a.model=? AND a.prompt_version=?
            WHERE l.active=1 AND l.lat IS NOT NULL
@@ -122,7 +128,7 @@ def listings():
     out = []
     for r in rows:
         d = dict(r)
-        d["ai_verdict"] = photos.ai_verdict(d.pop("margin"), d.pop("downgrade"))
+        d["ai_verdict"] = photos.ai_verdict(d["margin"], d.pop("downgrade"))
         if d["text_conflict"] is not None:
             d["text_conflict"] = bool(d["text_conflict"])
         out.append(d)
