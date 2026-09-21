@@ -366,7 +366,9 @@ def load():
         return _cache["model"]
     if not MODEL_PATH.exists() or not META_PATH.exists():
         raise FileNotFoundError(
-            f"ARV model missing ({MODEL_PATH}). Fit it with: py run.py train"
+            f"ARV model missing ({MODEL_PATH}).\n"
+            "  With real sold data:  py run.py backtest  then  py run.py train\n"
+            "  With no data at all:  py run.py demo  (fabricated dataset and model)"
         )
     import lightgbm as lgb
 

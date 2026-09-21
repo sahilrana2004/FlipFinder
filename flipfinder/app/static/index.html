@@ -1147,7 +1147,11 @@ function hideTip() { tip.hidden = true; }
 function setRows(rows) {
   S.rows = rows;
   S.byId = new Map(rows.map(r => [r.id, r]));
-  S.hasAI = rows.some(r => "ai_verdict" in r);
+  // A non-null verdict, not just the key: /api/listings always sends ai_verdict,
+  // null when nothing has been labeled. Testing for the key made hasAI always true,
+  // so a dataset with no labels at all still reported "0 deals" and stamped every
+  // card "Not labeled" — a judgement the model never made.
+  S.hasAI = rows.some(r => r.ai_verdict != null);
   for (const r of rows) r._hay = `${r.address ?? ""} ${r.city ?? ""} ${r.zip ?? ""}`.toLowerCase();
   document.body.classList.toggle("no-ai", !S.hasAI);
   $("#filters").hidden = !S.hasAI;
