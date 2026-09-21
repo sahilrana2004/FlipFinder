@@ -328,7 +328,7 @@ body.list-collapsed #listPanel { transform: translateX(calc(-100% - 2 * var(--ga
 .list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 6px 10px; outline: 0; }
 .card {
   display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; padding: 8px; border-radius: var(--r-card);
-  cursor: pointer; content-visibility: auto; contain-intrinsic-size: auto 92px;
+  cursor: pointer; content-visibility: auto; contain-intrinsic-size: auto 112px;
   transition: background-color .12s;
 }
 .card:hover, .card.is-hover { background: var(--wash); }
@@ -347,8 +347,13 @@ body.list-collapsed #listPanel { transform: translateX(calc(-100% - 2 * var(--ga
 .c-body { display: grid; align-content: center; gap: 3px; min-width: 0; }
 .c-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
 .c-addr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 650; }
-.c-price { font-size: 13.5px; font-weight: 650; white-space: nowrap; }
 .c-sub { color: var(--ink-2); font-size: 12px; }
+/* The offer is the headline: what the house is worth paying, with the ask it has to
+   come down from beside it. The ask lives here and nowhere else on the card. */
+.c-offer { display: flex; align-items: baseline; flex-wrap: wrap; gap: 1px 8px; margin-top: 2px; }
+.c-offer b { font-size: 14.5px; font-weight: 700; white-space: nowrap; }
+.c-offer .c-ask { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+.c-offer.none b { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .c-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .c-foot { margin-top: 3px; }
 .c-chips { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; }
@@ -430,7 +435,8 @@ body:not([data-view="map"]) #detail { opacity: 0; visibility: hidden; pointer-ev
 .figs { display: flex; align-items: flex-end; gap: 22px; flex-wrap: wrap; }
 .fig-label { font-size: 12px; color: var(--ink-2); }
 .fig-val { font: 650 22px/1.1 var(--font-display); letter-spacing: -.02em; margin-top: 2px; }
-.fig.hero .fig-val { font-size: 48px; letter-spacing: -.035em; line-height: 1; margin-top: 4px; }
+.fig.hero { flex: 1 1 100%; }
+.fig.hero .fig-val { font-size: 40px; letter-spacing: -.035em; line-height: 1; margin-top: 4px; }
 .fig-sub { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; }
 .stack { position: relative; display: flex; gap: 2px; height: 12px; margin-top: 2px; }
 .stack > i { flex: 1 1 0; min-width: 2px; background: var(--c); }
@@ -743,6 +749,7 @@ body:not([data-view="map"]) #map .leaflet-control-container { visibility: hidden
         <span class="sr-only">Sort listings</span>
         <select id="sort">
           <option value="score">Best score</option>
+          <option value="offer">Closest to a deal</option>
           <option value="margin">Highest margin</option>
           <option value="spread">Biggest spread</option>
           <option value="price">Lowest price</option>
@@ -888,6 +895,9 @@ const FILTERS = {
 };
 const SORTS = {
   score: (a, b) => (b.score ?? -1) - (a.score ?? -1),
+  // Ascending: the smallest gap between the ask and what the house is worth paying
+  // is the closest thing to a deal. No offer means nothing to be close to, so last.
+  offer: (a, b) => (a.offer_discount ?? Infinity) - (b.offer_discount ?? Infinity),
   margin: (a, b) => (b.margin ?? -1e9) - (a.margin ?? -1e9),
   spread: (a, b) => (b.spread ?? -1e12) - (a.spread ?? -1e12),
   price: (a, b) => (a.price ?? 1e12) - (b.price ?? 1e12),
@@ -1164,17 +1174,32 @@ function renderCounts() {
   syncLens($("#filters"), false);
 }
 
+// "Offer up to $88,809" / "34% below the $135,000 ask". A listing with no ARV has
+// no offer to make: it says so and shows the ask, rather than a 0 or a dash that
+// would read as an offer of nothing.
+function offerLine(max_offer, price, discount) {
+  if (max_offer == null) return { headline: "No offer — ARV unavailable", aside: `${money(price)} ask`, none: true };
+  // A discount at or below zero means the ask already clears the target margin;
+  // saying "−4% below the ask" would read as the opposite of what it is.
+  const aside = discount > 0
+    ? `${pct(discount, 0)} below the ${money(price)} ask`
+    : `the ${money(price)} ask already clears it`;
+  return { headline: `Offer up to ${money(max_offer)}`, aside, none: false };
+}
+
 function cardHTML(r) {
   const p = photo(r.thumb);
   const specs = [r.beds != null && `${fmtNum(r.beds)} bd`, r.baths != null && `${fmtNum(r.baths)} ba`, r.sqft != null && `${fmtInt(r.sqft)} sf`]
     .filter(Boolean).join(" · ");
   const sub = [esc(loc(r)), specs].filter(Boolean).join(" · ");
+  const offer = offerLine(r.max_offer, r.price, r.offer_discount);
   const sel = r.id === S.selected;
   return `<div class="card${sel ? " is-selected" : ""}${r.id === S.hover ? " is-hover" : ""}" role="option" id="c${r.id}" data-id="${r.id}" aria-selected="${sel}">
   <div class="thumb">${p ? `<img src="${esc(p.mid)}" data-orig="${esc(p.orig)}" alt="" loading="lazy" decoding="async">` : icon("home")}${r.score == null ? "" : `<span class="score-bar" style="--s:${clamp01(r.score).toFixed(3)}" title="Score ${(+r.score).toFixed(2)}"></span>`}</div>
   <div class="c-body">
-    <div class="c-row"><span class="c-addr">${esc(r.address)}</span><span class="c-price num">${money(r.price)}</span></div>
+    <div class="c-row"><span class="c-addr">${esc(r.address)}</span></div>
     <div class="c-row c-sub"><span class="c-meta">${sub}</span></div>
+    <div class="c-offer${offer.none ? " none" : ""}"><b class="num">${offer.headline}</b>${offer.aside ? `<span class="c-ask num">${offer.aside}</span>` : ""}</div>
     <div class="c-row c-foot">
       <span class="c-chips">${S.hasAI ? `<span class="chip v-${vKey(r.ai_verdict)}"><i></i>${vName(r.ai_verdict)}</span>` : ""}${VERDICTS[r.my_verdict] ? `<span class="chip ghost" title="Your label">You: ${VERDICTS[r.my_verdict].name}</span>` : ""}${r.red_flag_count ? `<span class="flag" title="${plural(r.red_flag_count, "red flag")}">${icon("flag")}${r.red_flag_count}</span>` : ""}${r.text_conflict ? `<span class="flag conflict" title="Remarks describe a different condition than the photos">${icon("alert")}</span>` : ""}</span>
       ${r.margin == null ? "" : `<span class="c-margin num ${r.margin >= 0 ? "up" : "down"}" title="Margin after reno, carry and closing">${icon(r.margin >= 0 ? "tri-up" : "tri-down", "fill")}${pct(r.margin)}</span>`}
@@ -1422,12 +1447,14 @@ function dealHTML(l, c) {
   const spread = c.spread ?? 0;
   const carry = c.arv - price - reno - spread;
   const gain = spread >= 0;
+  const offer = offerLine(c.max_offer, l.price, c.offer_discount);
   const total = gain ? c.arv : price + reno + carry;
   const grow = v => `flex-grow:${Math.max(v, 0).toFixed(0)}`;
   const lossLeft = gain ? 0 : (c.arv / total) * 100;
   return `<section class="sec">
     <div class="figs">
-      <div class="fig hero"><div class="fig-label">Margin</div><div class="fig-val num">${pct(c.margin)}</div><div class="fig-sub">after reno, carry &amp; closing</div></div>
+      <div class="fig hero"><div class="fig-label">Offer up to</div><div class="fig-val num">${offer.none ? "No offer" : money(c.max_offer)}</div><div class="fig-sub">${offer.none ? "ARV unavailable" : offer.aside}</div></div>
+      <div class="fig"><div class="fig-label">Margin at ask</div><div class="fig-val num">${pct(c.margin)}</div><div class="fig-sub">after reno, carry &amp; closing</div></div>
       <div class="fig"><div class="fig-label">${gain ? "Spread" : "Shortfall"}</div><div class="fig-val num">${money(spread)}</div><div class="fig-sub">on ARV ${money(c.arv)}</div></div>
       ${l.score == null ? "" : `<div class="fig"><div class="fig-label">Score</div><div class="fig-val num">${(+l.score).toFixed(2)}</div><div class="fig-sub">absolute · 0.50 = target margin</div></div>`}
     </div>

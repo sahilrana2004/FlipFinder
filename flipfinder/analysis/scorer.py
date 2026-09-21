@@ -156,6 +156,8 @@ def score_all(conn, cfg, weights=None, version=None):
 
     for listing_id, feats, est, score in results:
         components = {**feats, "arv": est["arv"], "reno_cost": est["reno_cost"],
+                      "max_offer": est["max_offer"],
+                      "offer_discount": est["offer_discount"],
                       "reno_tier": est["reno_tier"], "spread": est["spread"],
                       "comp_count": est["comp_count"],
                       "comp_ppsf": est["comp_ppsf"],
@@ -168,11 +170,13 @@ def score_all(conn, cfg, weights=None, version=None):
         conn.execute(
             """INSERT OR REPLACE INTO scores
                (listing_id, scorer_version, score, raw_score, margin, arv, reno_cost,
-                spread, confidence, liquidity, distress, size_mult, components)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                spread, max_offer, offer_discount, confidence, liquidity, distress,
+                size_mult, components)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (listing_id, version, min(score, 1.0), score, feats["margin"], est["arv"],
-             est["reno_cost"], est["spread"], feats["confidence"], feats["liquidity"],
-             feats["distress"], feats["size_mult"], json.dumps(components)),
+             est["reno_cost"], est["spread"], est["max_offer"], est["offer_discount"],
+             feats["confidence"], feats["liquidity"], feats["distress"],
+             feats["size_mult"], json.dumps(components)),
         )
     conn.commit()
     return len(results), version
