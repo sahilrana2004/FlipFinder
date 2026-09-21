@@ -73,10 +73,12 @@ def import_sold_details(conn, items):
     for item in items:
         cur = conn.execute(
             """UPDATE sold SET list_price=?, list_price_source=?, close_price=?,
-                 close_price_source=?, remarks=?, detail_fetched=CURRENT_TIMESTAMP
+                 close_price_source=?, remarks=?, detail_fetched=CURRENT_TIMESTAMP,
+                 close_ppsf=CASE WHEN ? IS NOT NULL AND sqft > 0 THEN ? / sqft END
                WHERE url=?""",
             (item.get("list_price"), item.get("list_price_source"), item.get("close_price"),
-             item.get("close_price_source"), item.get("remarks") or None, item["url"]),
+             item.get("close_price_source"), item.get("remarks") or None,
+             item.get("close_price"), item.get("close_price"), item["url"]),
         )
         n += cur.rowcount
     conn.commit()

@@ -7,7 +7,9 @@ backtest and can never find an underpriced listing. It only selects who is score
 
 Every feature is point-in-time: comps and tract medians come from sales that closed
 before the target's own sold date, through the same arv.comp_rows / comp_weights the
-live scorer uses. Condition comes from the agent's remarks.
+live scorer uses. They are priced in close dollars (sold.close_ppsf), so the comp
+features and the target share a currency; sales with no recovered close price are
+out of the comp set entirely. Condition comes from the agent's remarks.
 """
 import json
 import math
@@ -59,9 +61,8 @@ NEIGHBOR_MILES = 1.0
 
 BASE_FEATURES = [
     "sqft", "beds", "baths", "year_built", "lot_sqft", "dom",
-    "lat", "lng", "zip_code", "tract_ppsf", "tract_close_ppsf", "date_ordinal",
+    "lat", "lng", "zip_code", "tract_close_ppsf", "date_ordinal",
     "comp_wm_est", "comp_wm_ppsf", "comp_median_est", "comp_count", "comp_cv",
-    "comp_close_ppsf", "comp_close_count",
     "nb_close_ppsf", "nb_close_ppsf_size", "nb_close_dist", "nb_close_n",
     "nb_distressed_ppsf", "nb_renovated_ppsf",
     "remarks_missing", "remarks_len",
@@ -89,20 +90,19 @@ def _median(vals):
 
 def _tract_ppsfs(conn, tract, as_of, exclude_url):
     if not tract:
-        return [], [], None
+        return [], None
     date_sql, params = "", [tract]
     if as_of:
         date_sql = " AND sold_date < ?"
         params.append(as_of)
     rows = conn.execute(
-        f"SELECT url, ppsf, close_price, sqft, sold_date FROM sold WHERE tract=? AND ppsf IS NOT NULL "
+        f"SELECT url, close_ppsf, sold_date FROM sold WHERE tract=? AND close_ppsf IS NOT NULL "
         f"{arv_mod.ATTACHED_SOLD}{date_sql}",
         params,
     ).fetchall()
     rows = [r for r in rows if r["url"] != exclude_url]
-    listed = [r["ppsf"] for r in rows]
-    closed = [r["close_price"] / r["sqft"] for r in rows if r["close_price"] and r["sqft"]]
-    return listed, closed, max((r["sold_date"] for r in rows), default=None)
+    return ([r["close_ppsf"] for r in rows],
+            max((r["sold_date"] for r in rows), default=None))
 
 
 class _CloseIndex:
@@ -111,15 +111,15 @@ class _CloseIndex:
 
     def __init__(self, conn):
         rows = conn.execute(
-            f"SELECT url, lat, lng, sqft, close_price, sold_date, remarks FROM sold "
-            f"WHERE close_price IS NOT NULL AND sqft > 0 AND lat IS NOT NULL "
+            f"SELECT url, lat, lng, sqft, close_ppsf, sold_date, remarks FROM sold "
+            f"WHERE close_ppsf IS NOT NULL AND lat IS NOT NULL "
             f"{arv_mod.ATTACHED_SOLD}"
         ).fetchall()
         self.url = np.array([r["url"] for r in rows])
         self.lat = np.array([r["lat"] for r in rows])
         self.lng = np.array([r["lng"] for r in rows])
         self.sqft = np.array([r["sqft"] for r in rows])
-        self.ppsf = np.array([r["close_price"] / r["sqft"] for r in rows])
+        self.ppsf = np.array([r["close_ppsf"] for r in rows])
         self.date = np.array([r["sold_date"] for r in rows])
         self.group = {}
         for g, kws in NEIGHBOR_GROUPS.items():
@@ -187,11 +187,10 @@ def point_in_time_features(conn, subject, as_of, exclude_url=None, rows=None):
         "comp_count": len(rows),
     }
     f.update(_neighbor_features(conn, subject, as_of, exclude_url))
-    listed, closed, f["_tract_newest"] = _tract_ppsfs(conn, subject["tract"], as_of, exclude_url)
-    f["tract_ppsf"] = _median(listed)
+    closed, f["_tract_newest"] = _tract_ppsfs(conn, subject["tract"], as_of, exclude_url)
     f["tract_close_ppsf"] = _median(closed)
     if rows:
-        ppsfs = [r["ppsf"] for r in rows]
+        ppsfs = [r["close_ppsf"] for r in rows]
         weights = arv_mod.comp_weights(subject, rows, as_of=as_of)
         wm = arv_mod.weighted_percentile(ppsfs, weights, 0.5)
         arr = np.array(ppsfs)
@@ -199,14 +198,8 @@ def point_in_time_features(conn, subject, as_of, exclude_url=None, rows=None):
         f["comp_wm_est"] = wm * sqft
         f["comp_median_est"] = float(np.median(arr)) * sqft
         f["comp_cv"] = float(np.std(arr) / np.mean(arr)) if len(rows) >= 2 else None
-        cl = [(r["close_price"] / r["sqft"], w) for r, w in zip(rows, weights)
-              if r["close_price"] and r["sqft"]]
-        f["comp_close_count"] = len(cl)
-        f["comp_close_ppsf"] = (arv_mod.weighted_percentile([c[0] for c in cl], [c[1] for c in cl], 0.5)
-                                if cl else None)
     else:
-        f.update(comp_wm_ppsf=None, comp_wm_est=None, comp_median_est=None, comp_cv=None,
-                 comp_close_count=0, comp_close_ppsf=None)
+        f.update(comp_wm_ppsf=None, comp_wm_est=None, comp_median_est=None, comp_cv=None)
     return f
 
 
@@ -355,7 +348,11 @@ def predict_arv(conn, listing, as_of=None, exclude_url=None):
 # c5 widened this grid (learning rate, 31 leaves, 1000 rounds, min_data 5) and
 # scored worse on test, 58.4% against 64.0%: with ~54 low-price sales per inner
 # fold, a larger grid fits the validation noise. This is the grid that held up.
-CANDIDATE = "c4-allprice-close"
+# c4-allprice-close was the same search space over comp features priced in LIST
+# dollars. The comp and tract features are now close dollars and the two duplicate
+# close-price features (comp_close_ppsf/_count, tract_ppsf) are gone, so this is a
+# new candidate even though the grid is unchanged.
+CANDIDATE = "p1-close-comps"
 SEARCH = {
     "objective": ["regression", "regression_l1", "huber"],
     "num_leaves": [7, 15],

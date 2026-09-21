@@ -22,7 +22,11 @@ def _haversine_miles(lat1, lng1, lat2, lng2):
 # so the unit designator in the address is the only signal available here.
 ATTACHED_SOLD = "AND address NOT LIKE '% unit %' AND address NOT LIKE '% apt %'"
 
-COMP_FIELDS = "ppsf, lat, lng, url, address, sold_date, sqft, year_built, beds, close_price"
+# close_ppsf, never ppsf: sold.ppsf is the ASKING price per sqft (Texas is a
+# non-disclosure state), so comps built from it value a house in list dollars while
+# every target is a close price. Sales with no recovered close price are excluded
+# rather than mixed in at the wrong currency.
+COMP_FIELDS = "close_ppsf, lat, lng, url, address, sold_date, sqft, year_built, beds"
 
 
 def _normalize_address(addr):
@@ -55,7 +59,8 @@ def comp_rows(conn, listing, as_of=None, exclude_url=None):
     if listing["tract"]:
         rows = conn.execute(
             f"SELECT {COMP_FIELDS} FROM sold "
-            f"WHERE tract=? AND ppsf IS NOT NULL AND sqft BETWEEN ? AND ? {ATTACHED_SOLD}{date_sql}",
+            f"WHERE tract=? AND close_ppsf IS NOT NULL AND sqft BETWEEN ? AND ? "
+            f"{ATTACHED_SOLD}{date_sql}",
             (listing["tract"], lo, hi, *date_params),
         ).fetchall()
         rows = _exclude_self(rows, exclude_url, exclude_addr)
@@ -64,7 +69,7 @@ def comp_rows(conn, listing, as_of=None, exclude_url=None):
         dlng = MILES_1_5_LAT / max(0.2, math.cos(math.radians(listing["lat"])))
         cands = conn.execute(
             f"SELECT {COMP_FIELDS} FROM sold "
-            "WHERE ppsf IS NOT NULL AND sqft BETWEEN ? AND ? "
+            "WHERE close_ppsf IS NOT NULL AND sqft BETWEEN ? AND ? "
             f"AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? {ATTACHED_SOLD}{date_sql}",
             (lo, hi, listing["lat"] - dlat, listing["lat"] + dlat,
              listing["lng"] - dlng, listing["lng"] + dlng, *date_params),
@@ -79,7 +84,7 @@ def comp_rows(conn, listing, as_of=None, exclude_url=None):
 
 
 def _comps(conn, listing, as_of=None, exclude_url=None):
-    return [r["ppsf"] for r in comp_rows(conn, listing, as_of=as_of, exclude_url=exclude_url)]
+    return [r["close_ppsf"] for r in comp_rows(conn, listing, as_of=as_of, exclude_url=exclude_url)]
 
 
 def _days_between(iso_a, iso_b):
@@ -132,7 +137,7 @@ def weighted_percentile(values, weights, q):
 
 
 def comp_ppsf(listing, rows, percentile, weighted, as_of=None):
-    ppsfs = [r["ppsf"] for r in rows]
+    ppsfs = [r["close_ppsf"] for r in rows]
     if not ppsfs:
         return None
     if not weighted:
@@ -146,8 +151,8 @@ def tract_ppsf_p90(conn, tract):
     if not tract:
         return None
     vals = [
-        r["ppsf"] for r in conn.execute(
-            "SELECT ppsf FROM sold WHERE tract=? AND ppsf IS NOT NULL", (tract,)
+        r["close_ppsf"] for r in conn.execute(
+            "SELECT close_ppsf FROM sold WHERE tract=? AND close_ppsf IS NOT NULL", (tract,)
         )
     ]
     if len(vals) < 5:
@@ -184,7 +189,7 @@ def estimate(conn, cfg, listing, as_of=None, exclude_url=None):
     ppsf = comp_ppsf(listing, rows, s["arv_percentile"], s["arv_weighted"], as_of=as_of)
     arv, _ = avm.predict_arv(conn, listing, as_of=as_of, exclude_url=exclude_url)
 
-    ppsfs = [r["ppsf"] for r in rows]
+    ppsfs = [r["close_ppsf"] for r in rows]
     arr = np.array(ppsfs)
     cv = float(np.std(arr) / np.mean(arr)) if n >= 2 else 0.35
     confidence = min(1.0, n / 5.0) * max(0.0, 1.0 - cv / 0.35)
