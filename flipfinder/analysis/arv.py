@@ -187,7 +187,7 @@ def estimate(conn, cfg, listing, as_of=None, exclude_url=None):
         return None
     s = cfg["scoring"]
     ppsf = comp_ppsf(listing, rows, s["arv_percentile"], s["arv_weighted"], as_of=as_of)
-    arv, _ = avm.predict_arv(conn, listing, as_of=as_of, exclude_url=exclude_url)
+    arv, feats = avm.predict_arv(conn, listing, as_of=as_of, exclude_url=exclude_url)
 
     ppsfs = [r["close_ppsf"] for r in rows]
     arr = np.array(ppsfs)
@@ -204,6 +204,8 @@ def estimate(conn, cfg, listing, as_of=None, exclude_url=None):
     spread = arv - listing["price"] - reno_cost - carry
     return {
         "arv": arv,
+        "as_is_value": feats["_as_is"],
+        "arv_floored": feats["_arv_floored"],
         "reno_tier": tier,
         "reno_cost": reno_cost,
         "spread": spread,

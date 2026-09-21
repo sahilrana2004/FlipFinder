@@ -59,30 +59,33 @@ def cmd_import(conn, _cfg):
             n = redfin_detail.import_sold_details(conn, json.load(f))
         print(f"[import] {p.name}: {n} sales updated")
 
-    p = data / "enrich.json"
-    if not p.exists():
-        print(f"[import] {p} missing — skipped")
+    # enrich*.json, not enrich.json: a pull that covers new ZIPs only would otherwise
+    # have to overwrite the remarks and photos of every listing pulled before it.
+    enrichments = sorted(data.glob("enrich*.json"))
+    if not enrichments:
+        print(f"[import] no enrich*.json in {data} — skipped")
         return
-    with open(p, encoding="utf-8") as f:
-        items = json.load(f)
-    n = 0
-    for item in items:
-        row = conn.execute(
-            "SELECT id FROM listings WHERE url=?", (item["url"],)
-        ).fetchone()
-        if not row:
-            continue
-        conn.execute(
-            "UPDATE listings SET remarks=? WHERE id=?", (item["remarks"], row["id"])
-        )
-        for url in item.get("photos", [])[:8]:
+    for p in enrichments:
+        with open(p, encoding="utf-8") as f:
+            items = json.load(f)
+        n = 0
+        for item in items:
+            row = conn.execute(
+                "SELECT id FROM listings WHERE url=?", (item["url"],)
+            ).fetchone()
+            if not row:
+                continue
             conn.execute(
-                "INSERT OR IGNORE INTO photos (listing_id, url) VALUES (?,?)",
-                (row["id"], url),
+                "UPDATE listings SET remarks=? WHERE id=?", (item["remarks"], row["id"])
             )
-        n += 1
-    conn.commit()
-    print(f"[import] enrich.json: {n} listings")
+            for url in item.get("photos", [])[:8]:
+                conn.execute(
+                    "INSERT OR IGNORE INTO photos (listing_id, url) VALUES (?,?)",
+                    (row["id"], url),
+                )
+            n += 1
+        conn.commit()
+        print(f"[import] {p.name}: {n} listings")
 
 
 def cmd_enrich(conn, cfg):

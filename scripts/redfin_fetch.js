@@ -21,7 +21,10 @@
 // re-run after an interruption resumes where it stopped.
 (async () => {
   const RUN = {actives: true, sold: true, activeDetail: true, soldDetail: true};
-  const LOCATIONS = ['Dallas, TX', '75080', '75078'];
+  // The Dallas-wide active pull fills its cap with the whole city's price range, so
+  // the ZIPs that hold the bottom of the market are pulled separately.
+  const LOCATIONS = ['Dallas, TX', '75080', '75078',
+                     '75210', '75215', '75216', '75217', '75241'];
   const SOLD_ZIPS = [
     '75043', '75078', '75080', '75150', '75180', '75208', '75210', '75211',
     '75215', '75216', '75217', '75227', '75228', '75232', '75235', '75238',
