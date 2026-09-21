@@ -1,5 +1,6 @@
 """Tract assignment (FCC block API) + ACS tract stats + local market stats."""
 import time
+from datetime import date, timedelta
 
 import numpy as np
 import requests
@@ -125,6 +126,12 @@ def refresh_market_stats(conn):
                 (tract,),
             )
         ]
+        # Liquidity compares sales against the listings on the market right now, so
+        # the sale count has to cover a comparable window, not the whole 3-year pull.
+        sold_12m = conn.execute(
+            "SELECT COUNT(*) c FROM sold WHERE tract=? AND sold_date >= ?",
+            (tract, (date.today() - timedelta(days=365)).isoformat()),
+        ).fetchone()["c"]
         active = conn.execute(
             "SELECT COUNT(*) c FROM listings WHERE tract=? AND active=1", (tract,)
         ).fetchone()["c"]
@@ -141,16 +148,18 @@ def refresh_market_stats(conn):
         med_dom = float(np.median(doms)) if doms else None
         conn.execute(
             """INSERT INTO area_stats
-                 (tract, sold_count, active_count, median_sold_ppsf,
+                 (tract, sold_count, sold_count_12m, active_count, median_sold_ppsf,
                   p75_sold_ppsf, std_sold_ppsf, median_dom)
-               VALUES (?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?)
                ON CONFLICT(tract) DO UPDATE SET
-                 sold_count=excluded.sold_count, active_count=excluded.active_count,
+                 sold_count=excluded.sold_count,
+                 sold_count_12m=excluded.sold_count_12m,
+                 active_count=excluded.active_count,
                  median_sold_ppsf=excluded.median_sold_ppsf,
                  p75_sold_ppsf=excluded.p75_sold_ppsf,
                  std_sold_ppsf=excluded.std_sold_ppsf,
                  median_dom=excluded.median_dom, updated=CURRENT_TIMESTAMP""",
-            (tract, len(ppsf), active, med, p75, std, med_dom),
+            (tract, len(ppsf), sold_12m, active, med, p75, std, med_dom),
         )
     conn.commit()
     return len(tracts)

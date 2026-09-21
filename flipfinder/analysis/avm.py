@@ -59,8 +59,13 @@ NEIGHBOR_GROUPS = {
 NEIGHBOR_K = 10
 NEIGHBOR_MILES = 1.0
 
+# No `dom`: the gis-csv export leaves DAYS ON MARKET empty on sold rows, so it is
+# NULL for all 11,466 training sales and populated for all 791 actives. A feature
+# that is absent in training and present at serving time is train/serve skew, not a
+# feature — LightGBM learned nothing from it and would start splitting on it the day
+# a sold source carried it.
 BASE_FEATURES = [
-    "sqft", "beds", "baths", "year_built", "lot_sqft", "dom",
+    "sqft", "beds", "baths", "year_built", "lot_sqft",
     "lat", "lng", "zip_code", "tract_close_ppsf", "date_ordinal",
     "comp_wm_est", "comp_wm_ppsf", "comp_median_est", "comp_count", "comp_cv",
     "nb_close_ppsf", "nb_close_ppsf_size", "nb_close_dist", "nb_close_n",
@@ -181,7 +186,7 @@ def point_in_time_features(conn, subject, as_of, exclude_url=None, rows=None):
     f = {
         "sqft": sqft, "beds": subject["beds"], "baths": subject["baths"],
         "year_built": subject["year_built"], "lot_sqft": subject["lot_sqft"],
-        "dom": subject["dom"], "lat": subject["lat"], "lng": subject["lng"],
+        "lat": subject["lat"], "lng": subject["lng"],
         "zip": subject["zip"],
         "date_ordinal": date.fromisoformat(as_of).toordinal() if as_of else date.today().toordinal(),
         "comp_count": len(rows),
@@ -215,15 +220,57 @@ def condition_features(remarks, keywords):
     return f
 
 
-def renovated_profile(keywords):
-    """ARV is the value after repair: renovated indicators on, distressed off."""
+# How many rows the profile's indicator set is counted over before it falls back to
+# "at least this many indicators" instead of "exactly this many".
+MIN_PROFILE_ROWS = 20
+PROFILE_PERCENTILE = 75
+
+
+def renovated_profile(records, keywords):
+    """What a renovated listing in this market actually looks like.
+
+    Turning every renovated indicator on described a house no training row resembles
+    (the old profile set 29 of them; training rows average 2 and top out at 13), so
+    the ARV was the model's answer to a house that doesn't exist. This takes the
+    renovated rows, reads their p75 indicator count, and keeps the indicators that
+    appear most often among the rows at that count. Chosen on the tune split, like
+    the keywords, and frozen into the model's metadata."""
+    counts, hit_rows = [], []
+    for r in records:
+        hits = keyword_hits(r["remarks"], keywords["renovated"])
+        n = sum(hits.values())
+        if n:
+            counts.append(n)
+            hit_rows.append(hits)
+    if not counts:
+        return {"n": 0, "keywords": [], "rows_at_count": 0, "renovated_rows": 0}
+    target = int(round(float(np.percentile(counts, PROFILE_PERCENTILE))))
+    at = [h for h, n in zip(hit_rows, counts) if n == target]
+    basis = "exactly"
+    if len(at) < MIN_PROFILE_ROWS:
+        at = [h for h, n in zip(hit_rows, counts) if n >= target]
+        basis = "at least"
+    freq = {}
+    for h in at:
+        for kw, hit in h.items():
+            if hit:
+                freq[kw] = freq.get(kw, 0) + 1
+    ranked = sorted(freq, key=lambda kw: (-freq[kw], keywords["renovated"].index(kw)))
+    return {"n": target, "keywords": ranked[:target], "rows_at_count": len(at),
+            "renovated_rows": len(counts), "basis": basis,
+            "frequencies": {kw: freq[kw] for kw in ranked[:target]}}
+
+
+def profile_features(profile, keywords):
+    """ARV is the value after repair: the profile's indicators on, distressed off."""
     f = {"remarks_missing": 0}
     for kw in keywords["distressed"]:
         f[_kw_name(kw)] = 0
+    chosen = set(profile["keywords"])
     for kw in keywords["renovated"]:
-        f[_kw_name(kw)] = 1
+        f[_kw_name(kw)] = int(kw in chosen)
     f["n_distressed"] = 0
-    f["n_renovated"] = len(keywords["renovated"])
+    f["n_renovated"] = len(chosen)
     return f
 
 
@@ -331,13 +378,24 @@ def load():
 
 
 def predict_arv(conn, listing, as_of=None, exclude_url=None):
-    """After-repair value: the model's price for this house in renovated condition."""
+    """After-repair value: the model's price for this house with the renovated
+    profile's condition features, against its price as the remarks describe it.
+
+    Renovating cannot lower a house's value, so the as-is prediction is a floor. It
+    binds where the model reads the profile's indicators as worth less than the
+    listing's own text — a tree model has no monotonicity constraint to stop that —
+    and the returned features record when it did."""
     booster, meta = load()
-    f = point_in_time_features(conn, listing, as_of, exclude_url=exclude_url)
-    f.update(condition_features(listing["remarks"], meta["keywords"]))
-    f.update(renovated_profile(meta["keywords"]))
-    X = matrix([f], meta["features"], meta["zip_codes"])
-    return math.exp(float(booster.predict(X)[0])), f
+    base = point_in_time_features(conn, listing, as_of, exclude_url=exclude_url)
+    as_is = dict(base)
+    as_is.update(condition_features(listing["remarks"], meta["keywords"]))
+    renovated = dict(base)
+    renovated.update(profile_features(meta["renovated_profile"], meta["keywords"]))
+    X = matrix([as_is, renovated], meta["features"], meta["zip_codes"])
+    p_as_is, p_renovated = (math.exp(float(v)) for v in booster.predict(X))
+    renovated.update(_as_is=p_as_is, _arv_model=p_renovated,
+                     _arv_floored=p_renovated < p_as_is)
+    return max(p_renovated, p_as_is), renovated
 
 
 # ---- selection on the tune split -------------------------------------------------
@@ -349,10 +407,10 @@ def predict_arv(conn, listing, as_of=None, exclude_url=None):
 # scored worse on test, 58.4% against 64.0%: with ~54 low-price sales per inner
 # fold, a larger grid fits the validation noise. This is the grid that held up.
 # c4-allprice-close was the same search space over comp features priced in LIST
-# dollars. The comp and tract features are now close dollars and the two duplicate
-# close-price features (comp_close_ppsf/_count, tract_ppsf) are gone, so this is a
-# new candidate even though the grid is unchanged.
-CANDIDATE = "p1-close-comps"
+# dollars. p1-close-comps repriced them in close dollars and dropped two duplicate
+# close-price feature pairs. p2-no-dom drops `dom`, which was NULL for every
+# training sale and populated for every active — the grid is unchanged in all three.
+CANDIDATE = "p2-no-dom"
 SEARCH = {
     "objective": ["regression", "regression_l1", "huber"],
     "num_leaves": [7, 15],
@@ -391,11 +449,13 @@ def _kw_rows(records):
             for r in records]
 
 
-def fit_records(records, params, keywords=None, zip_codes=None):
-    """Fit on records (tune split, or everything for production). Keywords are
-    selected on these same records unless given."""
+def fit_records(records, params, keywords=None, zip_codes=None, profile=None):
+    """Fit on records (tune split, or everything for production). Keywords and the
+    renovated profile are selected on these same records unless given."""
     if keywords is None:
         keywords, _ = select_keywords(_kw_rows(records))
+    if profile is None:
+        profile = renovated_profile(records, keywords)
     if zip_codes is None:
         zips = sorted({r["feats"]["zip"] for r in records if r["feats"].get("zip")})
         zip_codes = {z: i for i, z in enumerate(zips)}
@@ -405,7 +465,7 @@ def fit_records(records, params, keywords=None, zip_codes=None):
     w = sample_weights([r["target"] for r in records], params.get("low_weight", 1.0))
     booster = fit(X, y, w, names, params)
     return booster, {"keywords": keywords, "features": names, "zip_codes": zip_codes,
-                     "params": params}
+                     "params": params, "renovated_profile": profile}
 
 
 def predict_records(booster, meta, records):
@@ -473,7 +533,8 @@ def train(conn):
     with open(chosen, encoding="utf-8") as f:
         info = json.load(f)["avm"]
     records = training_records(conn)
-    booster, meta = fit_records(records, info["params"], keywords=info["keywords"])
+    booster, meta = fit_records(records, info["params"], keywords=info["keywords"],
+                                profile=info["renovated_profile"])
     meta.update(candidate=info["candidate"], trained_on=len(records),
                 newest_sale=records[-1]["sold_date"] if records else None)
     save(booster, meta)
