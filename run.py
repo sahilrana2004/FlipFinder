@@ -102,9 +102,13 @@ def _label(conn, cfg):
         "SELECT COUNT(*) c FROM scores s WHERE NOT EXISTS "
         "(SELECT 1 FROM photos p WHERE p.listing_id = s.listing_id)"
     ).fetchone()["c"]
-    pending = len(photos.eligible(conn, cfg))
+    cap = cfg["ollama"]["max_labels_per_run"]
+    waiting = len(photos.eligible(conn, cfg))
+    pending = min(waiting, cap)
+    deferred = waiting - pending
     print(f'[ailabel] model {cfg["ollama"]["model"]}, prompt {photos.PROMPT_VERSION}; '
-          f"{pending} to label, {no_photos} scored listings skipped (no photos)")
+          f"{pending} to label, {deferred} left for the next run (cap {cap}), "
+          f"{no_photos} scored listings skipped (no photos)")
     if not pending:
         return 0, 0, no_photos
     if not photos.ollama_available(cfg):
@@ -112,7 +116,7 @@ def _label(conn, cfg):
         raise SystemExit(1)
     labeled = failed = 0
     elapsed = 0.0
-    for i, total, listing, result in photos.label_all(conn, cfg):
+    for i, total, listing, result in photos.label_all(conn, cfg, limit=cap):
         if result is None:
             failed += 1
             print(f"[ailabel] {i}/{total} {listing['address']}: FAILED (see {photos.FAILURE_LOG})")
