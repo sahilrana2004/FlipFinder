@@ -160,6 +160,17 @@ def tract_ppsf_p90(conn, tract):
     return float(np.percentile(np.array(vals), 90))
 
 
+def max_offer(arv, reno_cost, cfg):
+    """The most this house can be paid for and still clear the target margin.
+
+    margin is (arv - price - reno - carry) / arv, so margin >= target_margin is
+    exactly price <= arv - reno - carry - target_margin * arv. Deriving the offer
+    from the same three terms the margin uses keeps the headline and the margin from
+    ever disagreeing: price == max_offer is margin == target_margin, to the cent."""
+    s = cfg["scoring"]
+    return arv - reno_cost - s["carry_closing_pct"] * arv - s["target_margin"] * arv
+
+
 def _reno_tier(listing):
     # Photos flatter; the AI's reno_scope also reads the remarks. A human-corrected
     # condition still wins, since the scope was judged alongside the AI's condition.
@@ -202,8 +213,13 @@ def estimate(conn, cfg, listing, as_of=None, exclude_url=None):
     reno_cost = cfg["reno_cost_per_sqft"][tier] * listing["sqft"]
     carry = s["carry_closing_pct"] * arv
     spread = arv - listing["price"] - reno_cost - carry
+    offer = max_offer(arv, reno_cost, cfg)
     return {
         "arv": arv,
+        "max_offer": offer,
+        # What the ask has to come down by to become that offer. Negative would mean
+        # the house is already cheap enough; no listing here is.
+        "offer_discount": (listing["price"] - offer) / listing["price"],
         "as_is_value": feats["_as_is"],
         "arv_floored": feats["_arv_floored"],
         "reno_tier": tier,
