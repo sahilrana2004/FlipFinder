@@ -22,6 +22,9 @@ def compute(conn, cfg):
         kw = _clamp(len(hits) * 0.5)
         signals["keywords"] = hits
 
+        # area_stats' $/sqft is close dollars (see census.refresh_market_stats); the
+        # listing side is necessarily its asking $/sqft, so a negative z means asked
+        # below what the tract actually closes for — which is the signal wanted.
         z_sig = 0.0
         stats = None
         if row["tract"]:

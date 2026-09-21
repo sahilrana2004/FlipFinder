@@ -11,6 +11,9 @@ and are counted, not silently dropped.
 
 The primary population is test sales LISTED at or below $145k: the app chooses
 listings by asking price, so choosing by sale price would select on the answer.
+
+Comps are priced in close dollars (sold.close_ppsf), so the comp baselines predict
+in the same currency as the target instead of in asking dollars.
 """
 import csv
 import json
@@ -107,7 +110,7 @@ def _build_records(conn, targets):
             "list_price": t["list_price"] or t["price"],
             "target": t["close_price"], "remarks": t["remarks"],
             "comp_count": len(rows), "split": "tune" if i < n_tune else "test",
-            "ppsfs": [r["ppsf"] for r in rows],
+            "ppsfs": [r["close_ppsf"] for r in rows],
             "weights": arv_mod.comp_weights(t, rows, as_of=t["sold_date"]) if rows else [],
             "feats": feats,
         })
@@ -182,6 +185,29 @@ def _segment_metrics(records, weighted, q):
     }
 
 
+def _ask_benchmark(records):
+    """The last asking price used as the prediction. A reference, never a method:
+    the asking price can't be a feature (a model that reads it can never find an
+    underpriced listing), but it is the bar any model has to clear."""
+    out = {}
+    for pop, pred in POPULATIONS:
+        rows = [r for r in records if r["target"] and pred(r)]
+        signed = [(r["list_price"] - r["target"]) / r["target"] for r in rows]
+        abs_errs = [abs(e) for e in signed]
+        lo, hi = wilson(sum(1 for e in abs_errs if e <= 0.20), len(abs_errs))
+        out[pop] = {
+            "n": len(rows), "n_predicted": len(signed), "within_20pct_ci": [lo, hi],
+            "coverage": None,
+            "within_20pct": round(sum(1 for e in abs_errs if e <= 0.20) / len(abs_errs), 4)
+            if abs_errs else None,
+            "within_10pct": round(sum(1 for e in abs_errs if e <= 0.10) / len(abs_errs), 4)
+            if abs_errs else None,
+            "median_abs_pct_error": round(float(np.median(abs_errs)), 4) if abs_errs else None,
+            "median_signed_pct_error": round(float(np.median(signed)), 4) if signed else None,
+        }
+    return out
+
+
 def _segments(records):
     segs = {"overall": {"overall": records}}
 
@@ -254,24 +280,28 @@ def _ci(m):
     return "n/a" if lo is None else f"[{lo * 100:.1f}, {hi * 100:.1f}]"
 
 
-def _headline(metrics, methods, split):
+def _row(pop, name, m):
+    return (
+        f"{pop:<15}{name:<18}{m['n_predicted']:>6}{_fmt(m['within_20pct']):>8}{_ci(m):>16}"
+        f"{_fmt(m['within_10pct']):>8}{_fmt(m['median_abs_pct_error']):>10}"
+        f"{_fmt(m['median_signed_pct_error']):>13}"
+    )
+
+
+def _headline(metrics, methods, split, ask):
     lines = [
         f"{'population':<15}{'method':<18}{'n':>6}{'w20%':>8}{'95% CI':>16}{'w10%':>8}"
         f"{'med_abs%':>10}{'med_signed%':>13}",
     ]
     for pop, _ in POPULATIONS:
         for name, _, _ in methods:
-            m = metrics[name][split]["population"][pop]
-            lines.append(
-                f"{pop:<15}{name:<18}{m['n_predicted']:>6}{_fmt(m['within_20pct']):>8}{_ci(m):>16}"
-                f"{_fmt(m['within_10pct']):>8}{_fmt(m['median_abs_pct_error']):>10}"
-                f"{_fmt(m['median_signed_pct_error']):>13}"
-            )
+            lines.append(_row(pop, name, metrics[name][split]["population"][pop]))
+        lines.append(_row(pop, "ask (reference)", ask[pop]))
     return lines
 
 
 def _write_summary(path, metrics, methods, sweep_table, best, checked, violations,
-                   coverage, avm_info):
+                   coverage, avm_info, ask):
     lines = [
         "FlipFinder ARV backtest summary",
         f"leakage self-check: {checked} targets checked, {violations} violations",
@@ -281,7 +311,7 @@ def _write_summary(path, metrics, methods, sweep_table, best, checked, violation
         f"({coverage['test_primary_with_target']} with a close price)",
         "",
         "== TEST SPLIT: primary population = sales listed at or below $145k ==",
-        *_headline(metrics, methods, "test"),
+        *_headline(metrics, methods, "test", ask),
         "",
         f"AVM candidate {avm_info['candidate']}: params {json.dumps(avm_info['params'])}",
         f"  inner validation (tune split only): primary w20 {_fmt(avm_info['inner_primary_w20'])}, "
@@ -381,15 +411,16 @@ def run(conn, cfg, out_dir=None):
         "test_primary_with_target": sum(1 for r in test
                                         if r["list_price"] <= BUY_BOX_MAX and r["target"]),
     }
+    ask = _ask_benchmark(test)
     payload = {"sweep": sweep_table, "best": best, "coverage": coverage, "avm": avm_info,
-               "avm_search": ranked,
+               "avm_search": ranked, "ask_benchmark_test": ask,
                "methods": [{"name": n, "weighted": w, "percentile": q} for n, w, q in methods],
                "metrics": metrics}
     with open(out_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
     _write_errors_csv(out_dir / "errors.csv", records, methods)
     _write_summary(out_dir / "summary.txt", metrics, methods, sweep_table, best,
-                   checked, violations, coverage, avm_info)
+                   checked, violations, coverage, avm_info, ask)
 
     # every finished candidate's single test score, appended
     log = {"ts": datetime.now().isoformat(timespec="seconds"),

@@ -103,7 +103,13 @@ def fetch_acs(conn, cfg):
 
 
 def refresh_market_stats(conn):
-    """Per-tract stats computed from our own sold + active data."""
+    """Per-tract stats computed from our own sold + active data.
+
+    The $/sqft stats are close dollars (sold.close_ppsf). sold.ppsf is the asking
+    price per sqft, so a tract median built from it sits above what houses in the
+    tract actually close for, and distress's z-score would read every listing as
+    cheaper than it is. sold_count therefore counts sales with a recovered close
+    price, not every row."""
     tracts = {
         r["tract"]
         for r in conn.execute(
@@ -113,9 +119,10 @@ def refresh_market_stats(conn):
     }
     for tract in tracts:
         ppsf = [
-            r["ppsf"]
+            r["close_ppsf"]
             for r in conn.execute(
-                "SELECT ppsf FROM sold WHERE tract=? AND ppsf IS NOT NULL", (tract,)
+                "SELECT close_ppsf FROM sold WHERE tract=? AND close_ppsf IS NOT NULL",
+                (tract,),
             )
         ]
         active = conn.execute(

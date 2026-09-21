@@ -150,7 +150,18 @@ ADDED_COLUMNS = {
         ("lot_sqft", "REAL"),
         ("dom", "INTEGER"),
         ("detail_fetched", "TEXT"),          # set once the detail page was scraped
+        # sold.ppsf is price/sqft, i.e. LIST dollars. Every comp, tract median and
+        # market stat is built from close_ppsf instead, so nothing mixes currencies.
+        ("close_ppsf", "REAL"),
     ],
+}
+
+# Run once, when the column above is first added, so an existing DB gets the value
+# for every sale whose close price is already recovered.
+BACKFILL = {
+    ("sold", "close_ppsf"):
+        "UPDATE sold SET close_ppsf = close_price / sqft "
+        "WHERE close_price IS NOT NULL AND sqft > 0",
 }
 
 
@@ -160,6 +171,9 @@ def _migrate(conn):
         for name, decl in cols:
             if name not in have:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                sql = BACKFILL.get((table, name))
+                if sql:
+                    conn.execute(sql)
 
 
 def init_db():
