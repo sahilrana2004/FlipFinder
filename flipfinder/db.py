@@ -139,6 +139,12 @@ ADDED_COLUMNS = {
     "ai_labels": [
         ("downgrade", "INTEGER"),            # v4+: one step below the margin ceiling
     ],
+    "area_stats": [
+        # sold_count spans every sale held for the tract (3 years), which compared
+        # against a current active count reads as boundless liquidity. Liquidity uses
+        # this trailing-12-month count instead.
+        ("sold_count_12m", "REAL"),
+    ],
     # Texas doesn't disclose sale prices: the CSV's sold PRICE is the last asking
     # price. The real close price comes from the detail page's MLS ratio fields.
     "sold": [

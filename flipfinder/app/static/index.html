@@ -1429,7 +1429,7 @@ function dealHTML(l, c) {
     <div class="figs">
       <div class="fig hero"><div class="fig-label">Margin</div><div class="fig-val num">${pct(c.margin)}</div><div class="fig-sub">after reno, carry &amp; closing</div></div>
       <div class="fig"><div class="fig-label">${gain ? "Spread" : "Shortfall"}</div><div class="fig-val num">${money(spread)}</div><div class="fig-sub">on ARV ${money(c.arv)}</div></div>
-      ${l.score == null ? "" : `<div class="fig"><div class="fig-label">Score</div><div class="fig-val num">${(+l.score).toFixed(2)}</div><div class="fig-sub">rank among scored</div></div>`}
+      ${l.score == null ? "" : `<div class="fig"><div class="fig-label">Score</div><div class="fig-val num">${(+l.score).toFixed(2)}</div><div class="fig-sub">absolute · 0.50 = target margin</div></div>`}
     </div>
     <div class="stack" role="img" aria-label="After-repair value ${money(c.arv)}: purchase ${money(price)}, renovation ${money(reno)}, carry and closing ${money(carry)}, ${gain ? "spread" : "shortfall"} ${money(spread)}">
       <i style="--c:var(--cost-1);${grow(price)}"></i><i style="--c:var(--cost-2);${grow(reno)}"></i><i style="--c:var(--cost-3);${grow(carry)}"></i>${gain ? `<i class="gain" style="${grow(spread)}"></i>` : `<b class="loss" style="left:${lossLeft.toFixed(2)}%"></b>`}

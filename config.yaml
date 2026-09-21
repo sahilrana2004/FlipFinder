@@ -3,6 +3,16 @@ market:
     - "Dallas, TX"
     - "75080"                      # Richardson
     - "75078"                      # Prosper
+    # The Dallas-wide pull is capped at max_listings and fills with the whole city's
+    # price range, so the bottom of the market barely appears in it. These are the
+    # ZIPs that actually hold sales at or below the buy box (share of sales at or
+    # below $145k, of 11,466 held sales): 75210 15.5%, 75215 12.3%, 75216 10.5%,
+    # 75217 7.4%, 75241 3.3%. Pulled per ZIP so each gets its own cap.
+    - "75210"                      # South Dallas
+    - "75215"                      # South Dallas / Fair Park
+    - "75216"                      # Oak Cliff
+    - "75217"                      # Pleasant Grove
+    - "75241"                      # Red Bird
   max_listings: 350
   sold_within_days: 180
 
@@ -17,7 +27,11 @@ scoring:
   carry_closing_pct: 0.08          # carry + closing, as fraction of ARV
   arv_percentile: 0.50             # comp $/sqft percentile (confidence + display; ARV is the AVM)
   arv_weighted: true               # weight comps by sqft/age/beds/distance/recency
-  deal_threshold: 0.5              # normalized score above this renders green
+  target_margin: 0.10              # the margin a deal has to hit; scores 0.5 on the margin factor
+  margin_steepness: 20             # logistic slope: margin 0% -> 0.12, 5% -> 0.27, 20% -> 0.88
+  # Absolute, not a rank: 0.5 is a listing at the target margin with 0.5 confidence,
+  # 0.5 liquidity and 0.5 distress. Holds for any weights (geometric mean).
+  deal_threshold: 0.5
   weights:                         # exponents in the multiplicative score; refit via POST /api/fit
     margin: 1.0
     confidence: 0.6

@@ -30,21 +30,21 @@ def _labeled_features(conn, split):
     return feats, verdicts
 
 
-def _scores_for(weights, feats):
-    return [combine(f, weights) for f in feats]
+def _scores_for(weights, feats, cfg):
+    return [combine(f, weights, cfg) for f in feats]
 
 
-def _spearman(weights, feats, verdicts):
+def _spearman(weights, feats, verdicts, cfg):
     if len(set(verdicts)) < 2:
         return 0.0
-    rho, _ = spearmanr(_scores_for(weights, feats), verdicts)
+    rho, _ = spearmanr(_scores_for(weights, feats, cfg), verdicts)
     return 0.0 if np.isnan(rho) else float(rho)
 
 
-def _precision_at_20(weights, feats, verdicts):
+def _precision_at_20(weights, feats, verdicts, cfg):
     if not feats:
         return None
-    order = np.argsort(_scores_for(weights, feats))[::-1]
+    order = np.argsort(_scores_for(weights, feats, cfg))[::-1]
     k = min(20, len(order))
     top = [verdicts[i] for i in order[:k]]
     return sum(1 for v in top if v >= 1) / k
@@ -70,18 +70,18 @@ def run(conn, cfg):
     x0 = np.array([prev_weights[k] for k in FEATURE_KEYS])
 
     res = minimize(
-        lambda x: -_spearman(_to_weights(x), train_f, train_v),
+        lambda x: -_spearman(_to_weights(x), train_f, train_v, cfg),
         x0,
         method="Nelder-Mead",
         options={"maxiter": 400, "xatol": 1e-3, "fatol": 1e-4},
     )
     new_weights = _to_weights(res.x)
 
-    train_sp = _spearman(new_weights, train_f, train_v)
+    train_sp = _spearman(new_weights, train_f, train_v, cfg)
     enough_holdout = len(hold_f) >= fit_cfg["min_holdout_labels"]
-    hold_sp_new = _spearman(new_weights, hold_f, hold_v) if enough_holdout else None
-    hold_sp_prev = _spearman(prev_weights, hold_f, hold_v) if enough_holdout else None
-    hold_p20 = _precision_at_20(new_weights, hold_f, hold_v) if enough_holdout else None
+    hold_sp_new = _spearman(new_weights, hold_f, hold_v, cfg) if enough_holdout else None
+    hold_sp_prev = _spearman(prev_weights, hold_f, hold_v, cfg) if enough_holdout else None
+    hold_p20 = _precision_at_20(new_weights, hold_f, hold_v, cfg) if enough_holdout else None
 
     if not enough_holdout:
         promoted = False

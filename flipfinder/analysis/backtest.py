@@ -373,7 +373,8 @@ def _fit_avm(records):
             "inner_primary_w20": chosen["inner_primary_w20"],
             "inner_all_w20": chosen["inner_all_w20"],
             "inner_primary_n": chosen["inner_primary_n"],
-            "keywords": meta["keywords"]}
+            "keywords": meta["keywords"],
+            "renovated_profile": meta["renovated_profile"]}
     gain = booster.feature_importance(importance_type="gain")
     info["importance"] = sorted(
         ([n, round(float(g), 1)] for n, g in zip(meta["features"], gain)),
