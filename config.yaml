@@ -8,14 +8,14 @@ market:
 
 buy_box:
   min_price: 30000
-  max_price: 250000
+  max_price: 145000
   min_sqft: 700
   max_sqft: 2600
   min_beds: 2
 
 scoring:
   carry_closing_pct: 0.08          # carry + closing, as fraction of ARV
-  arv_percentile: 0.50             # comp $/sqft percentile; tuned by `py run.py backtest`
+  arv_percentile: 0.50             # comp $/sqft percentile (confidence + display; ARV is the AVM)
   arv_weighted: true               # weight comps by sqft/age/beds/distance/recency
   deal_threshold: 0.5              # normalized score above this renders green
   weights:                         # exponents in the multiplicative score; refit via POST /api/fit

@@ -1,7 +1,7 @@
 import argparse
 import json
 
-from flipfinder.analysis import backtest, distress, fitter, photos, scorer
+from flipfinder.analysis import avm, backtest, distress, fitter, photos, scorer
 from flipfinder.config import load_config
 from flipfinder.db import init_db
 from flipfinder.ingest import census, redfin, redfin_detail
@@ -52,6 +52,12 @@ def cmd_import(conn, _cfg):
                 print(f"[import] {p.name}: {kept} kept, {skipped} skipped")
             else:
                 print(f"[import] {p.name}: {result} rows")
+
+    details = sorted(data.glob("sold_detail_*.json"))
+    for p in details:
+        with open(p, encoding="utf-8") as f:
+            n = redfin_detail.import_sold_details(conn, json.load(f))
+        print(f"[import] {p.name}: {n} sales updated")
 
     p = data / "enrich.json"
     if not p.exists():
@@ -158,7 +164,19 @@ def cmd_backtest(conn, cfg):
           f"({result['n_tune']} tune / {result['n_test']} test)")
     print(f"[backtest] leakage check: {result['leakage_checked']} checked, "
           f"{result['leakage_violations']} violations")
+    for name, m in result["primary"].items():
+        lo, hi = m["within_20pct_ci"]
+        w20 = "n/a" if m["within_20pct"] is None else f"{m['within_20pct'] * 100:.1f}%"
+        ci = "" if lo is None else f" [{lo * 100:.1f}, {hi * 100:.1f}]"
+        print(f"[backtest] test, listed <= $145k, {name}: n={m['n_predicted']} "
+              f"within 20% {w20}{ci}")
     print("[backtest] wrote data/backtest/{metrics.json,errors.csv,summary.txt}")
+
+
+def cmd_train(conn, _cfg):
+    meta = avm.train(conn)
+    print(f"[train] ARV model ({meta['candidate']}) fit on {meta['trained_on']} sales "
+          f"through {meta['newest_sale']}; saved to {avm.MODEL_PATH}")
 
 
 def cmd_serve(_conn, cfg):
@@ -177,6 +195,7 @@ COMMANDS = {
     "score": cmd_score,
     "fit": cmd_fit,
     "backtest": cmd_backtest,
+    "train": cmd_train,
     "serve": cmd_serve,
 }
 
