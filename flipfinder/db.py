@@ -174,6 +174,13 @@ BACKFILL = {
     ("sold", "close_ppsf"):
         "UPDATE sold SET close_ppsf = close_price / sqft "
         "WHERE close_price IS NOT NULL AND sqft > 0",
+    # scores is a derived cache -- score_all deletes and rewrites the whole table on
+    # every run -- so a row written before max_offer existed cannot be filled in here
+    # without duplicating the offer formula outside arv.py. Dropping the stale rows
+    # is the honest option: the UI then shows its "no scored listings yet, run
+    # py run.py refresh" empty state instead of rendering every listing as
+    # "No offer -- ARV unavailable", which is what a half-migrated table looks like.
+    ("scores", "max_offer"): "DELETE FROM scores",
 }
 
 
