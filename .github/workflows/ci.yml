@@ -13,11 +13,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
-      # The unit tests import flipfinder.db and flipfinder.analysis.arv, which pull
-      # in numpy. They need no lightgbm, no database and no scraped data, so the full
-      # requirements file is not installed here.
-      - run: python -m pip install --upgrade pip numpy pyyaml
+      # The full requirements, not a hand-picked subset: `run.py --help` imports the
+      # whole command chain, so it needs scipy and requests as well as numpy, and a
+      # subset listed here would rot the first time a module grows an import. This
+      # also makes CI a check on requirements.txt itself.
+      - run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
       - name: Unit tests
         run: python -m unittest discover -s tests -v
@@ -40,4 +43,19 @@ jobs:
           if missing:
               sys.exit(f"not described in --help: {', '.join(missing)}")
           print(f"all {len(run.COMMANDS)} commands described")
+          EOF
+
+      # The clean-machine path the README promises: no database, no model, no
+      # network, no scraped data. If `demo` breaks, the README is lying.
+      - name: Demo runs on a clean checkout
+        run: |
+          python run.py demo
+          python - <<'EOF'
+          import sqlite3, sys
+          from flipfinder.config import DB_PATH
+          conn = sqlite3.connect(DB_PATH)
+          n = conn.execute("SELECT COUNT(*) FROM scores").fetchone()[0]
+          if n == 0:
+              sys.exit("demo produced no scored listings")
+          print(f"demo scored {n} synthetic listings")
           EOF
