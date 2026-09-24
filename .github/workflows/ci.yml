@@ -1,0 +1,61 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # The full requirements, not a hand-picked subset: `run.py --help` imports the
+      # whole command chain, so it needs scipy and requests as well as numpy, and a
+      # subset listed here would rot the first time a module grows an import. This
+      # also makes CI a check on requirements.txt itself.
+      - run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      # A syntax error in a module the tests never import would otherwise reach
+      # master unnoticed; there is no linter in this project.
+      - name: Every module parses
+        run: python -m compileall -q flipfinder run.py scripts
+
+      # Read the command list out of run.py rather than hardcoding it here, so
+      # adding a command without describing it fails instead of drifting silently.
+      - name: Every command is described in --help
+        run: |
+          python run.py --help
+          python - <<'EOF'
+          import subprocess, sys, run
+          out = subprocess.run([sys.executable, "run.py", "--help"],
+                               capture_output=True, text=True, check=True).stdout
+          missing = [name for name in run.COMMANDS if f"  {name} " not in out]
+          if missing:
+              sys.exit(f"not described in --help: {', '.join(missing)}")
+          print(f"all {len(run.COMMANDS)} commands described")
+          EOF
+
+      # The clean-machine path the README promises: no database, no model, no
+      # network, no scraped data. If `demo` breaks, the README is lying.
+      - name: Demo runs on a clean checkout
+        run: |
+          python run.py demo
+          python - <<'EOF'
+          import sqlite3, sys
+          from flipfinder.config import DB_PATH
+          conn = sqlite3.connect(DB_PATH)
+          n = conn.execute("SELECT COUNT(*) FROM scores").fetchone()[0]
+          if n == 0:
+              sys.exit("demo produced no scored listings")
+          print(f"demo scored {n} synthetic listings")
+          EOF
