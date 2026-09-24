@@ -324,6 +324,7 @@ body.list-collapsed #listPanel { transform: translateX(calc(-100% - 2 * var(--ga
 .search input::-webkit-search-cancel-button { display: none; }
 .search:focus-within kbd { visibility: hidden; }
 #filters { display: grid; grid-template-columns: repeat(3, auto); justify-content: stretch; }
+#priceFilter { display: grid; grid-template-columns: repeat(2, auto); justify-content: stretch; }
 
 .list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 6px 10px; outline: 0; }
 .card {
@@ -769,6 +770,11 @@ body:not([data-view="map"]) #map .leaflet-control-container { visibility: hidden
       <button type="button" role="radio" data-f="maybedeal" aria-checked="false"><i class="dot v-maybe"></i>Maybe + Deal <span class="count num"></span></button>
       <button type="button" role="radio" data-f="deal" aria-checked="false"><i class="dot v-deal"></i>Deals <span class="count num"></span></button>
     </div>
+    <div class="seg seg-sm" id="priceFilter" role="radiogroup" aria-label="Filter by asking price">
+      <span class="lens" aria-hidden="true"></span>
+      <button type="button" role="radio" data-p="all" aria-checked="true">Any price <span class="count num"></span></button>
+      <button type="button" role="radio" data-p="target" aria-checked="false">Under $145k <span class="count num"></span></button>
+    </div>
   </div>
   <div class="list" id="list" role="listbox" tabindex="0" aria-label="Scored listings">
     <div class="card skel" aria-hidden="true"><div class="thumb"></div><div class="c-body"><i></i><i></i><i></i></div></div>
@@ -893,6 +899,13 @@ const FILTERS = {
   maybedeal: r => r.ai_verdict >= 1,
   deal: r => r.ai_verdict === 2,
 };
+// The buy box caps at $250k because the AVM is far more accurate there, but $145k
+// is still the band Sahil is shopping, so it stays reachable as a filter.
+const TARGET_BAND = 145000;
+const PRICE_FILTERS = {
+  all: () => true,
+  target: r => r.price != null && r.price <= TARGET_BAND,
+};
 const SORTS = {
   score: (a, b) => (b.score ?? -1) - (a.score ?? -1),
   // Ascending: the smallest gap between the ask and what the house is worth paying
@@ -909,6 +922,7 @@ const S = {
   shown: [],
   hasAI: false,
   filter: FILTERS[store.get("ff_map_filter")] ? store.get("ff_map_filter") : "all",
+  priceFilter: PRICE_FILTERS[store.get("ff_price_filter")] ? store.get("ff_price_filter") : "all",
   sort: SORTS[store.get("ff_sort")] ? store.get("ff_sort") : "score",
   query: "",
   selected: null,
@@ -1144,7 +1158,10 @@ function setRows(rows) {
 function computeShown() {
   const q = S.query.trim().toLowerCase();
   const keep = FILTERS[S.filter];
-  S.shown = S.rows.filter(r => keep(r) && (!q || r._hay.includes(q))).sort(SORTS[S.sort]);
+  const inBand = PRICE_FILTERS[S.priceFilter];
+  S.shown = S.rows
+    .filter(r => keep(r) && inBand(r) && (!q || r._hay.includes(q)))
+    .sort(SORTS[S.sort]);
 }
 
 function refresh({ fit = false, animate = false } = {}) {
@@ -1167,11 +1184,18 @@ function renderSummary() {
 function renderCounts() {
   const q = S.query.trim().toLowerCase();
   const pool = q ? S.rows.filter(r => r._hay.includes(q)) : S.rows;
+  const byPrice = pool.filter(PRICE_FILTERS[S.priceFilter]);
   for (const b of $$("#filters [data-f]")) {
-    b.querySelector(".count").textContent = pool.filter(FILTERS[b.dataset.f]).length;
+    b.querySelector(".count").textContent = byPrice.filter(FILTERS[b.dataset.f]).length;
     b.setAttribute("aria-checked", b.dataset.f === S.filter);
   }
+  const byVerdict = pool.filter(FILTERS[S.filter]);
+  for (const b of $$("#priceFilter [data-p]")) {
+    b.querySelector(".count").textContent = byVerdict.filter(PRICE_FILTERS[b.dataset.p]).length;
+    b.setAttribute("aria-checked", b.dataset.p === S.priceFilter);
+  }
   syncLens($("#filters"), false);
+  syncLens($("#priceFilter"), false);
 }
 
 // "Offer up to $88,809" / "34% below the $135,000 ask". A listing with no ARV has
@@ -1294,6 +1318,8 @@ function resetFilters() {
   $("#search").value = "";
   S.filter = "all";
   store.set("ff_map_filter", "all");
+  S.priceFilter = "all";
+  store.set("ff_price_filter", "all");
   refresh({ fit: true });
 }
 
@@ -1965,6 +1991,16 @@ filtersEl.addEventListener("click", e => {
   const b = e.target.closest("[data-f]");
   if (b) setFilter(b.dataset.f);
 });
+const priceFilterEl = $("#priceFilter");
+priceFilterEl.addEventListener("click", e => {
+  const b = e.target.closest("[data-p]");
+  if (!b || b.dataset.p === S.priceFilter) return;
+  S.priceFilter = b.dataset.p;
+  store.set("ff_price_filter", S.priceFilter);
+  refresh({ fit: true, animate: true });
+  syncLens(priceFilterEl);
+});
+
 filtersEl.addEventListener("keydown", e => {
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
   const keys = Object.keys(FILTERS);

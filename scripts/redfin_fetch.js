@@ -36,7 +36,9 @@
   const SOLD_WITHIN_DAYS_ZIP = 1095;   // verified: 730, 1095 and 1825 all honored
   const PRICE_BANDS = [[null, 100000], [100000, 150000], [150000, 200000],
                        [200000, 250000], [250000, 325000], [325000, 425000], [425000, null]];
-  const ACTIVE_DETAIL_MAX = 145000;    // enrich every active at or below the buy box
+  // Keep in sync with config.yaml buy_box.max_price: the model and the vision
+  // labeler both need remarks and photos for everything the buy box can reach.
+  const ACTIVE_DETAIL_MAX = 250000;
   // Every sale, not just the buy box: the close price is only on the detail page,
   // and a model trained on cheap sales alone can't price a renovated house.
   const SQFT = [700, 2600];

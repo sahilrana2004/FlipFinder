@@ -262,16 +262,21 @@ def _log_failure(listing, error, raw):
                 f"{listing['address']}\nerror: {error}\nraw: {raw}\n")
 
 
-def eligible(conn, cfg):
-    return conn.execute(
-        """SELECT l.*, s.components FROM listings l
-           JOIN scores s ON s.listing_id = l.id
-           WHERE EXISTS (SELECT 1 FROM photos p WHERE p.listing_id = l.id)
-             AND NOT EXISTS (SELECT 1 FROM ai_labels a WHERE a.listing_id = l.id
-                             AND a.model = ? AND a.prompt_version = ?)
-           ORDER BY s.score DESC""",
-        (cfg["ollama"]["model"], PROMPT_VERSION),
-    ).fetchall()
+def eligible(conn, cfg, limit=None):
+    """Unlabeled scored listings with photos, best score first. At 15-60s a listing
+    a full buy box is hours of GPU time, so callers cap the run with `limit`; the
+    next run picks up where this one stopped, since labeled rows drop out here."""
+    sql = """SELECT l.*, s.components FROM listings l
+             JOIN scores s ON s.listing_id = l.id
+             WHERE EXISTS (SELECT 1 FROM photos p WHERE p.listing_id = l.id)
+               AND NOT EXISTS (SELECT 1 FROM ai_labels a WHERE a.listing_id = l.id
+                               AND a.model = ? AND a.prompt_version = ?)
+             ORDER BY s.score DESC"""
+    params = [cfg["ollama"]["model"], PROMPT_VERSION]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 def label_listing(conn, cfg, listing):
@@ -328,9 +333,9 @@ def label_listing(conn, cfg, listing):
     return {**fields, "id": cur.lastrowid, "seconds": seconds}
 
 
-def label_all(conn, cfg):
+def label_all(conn, cfg, limit=None):
     """Yields (index, total, listing, result) per listing; result is None on
     failure. Resumable: already-labeled listings aren't eligible."""
-    rows = eligible(conn, cfg)
+    rows = eligible(conn, cfg, limit=limit)
     for i, listing in enumerate(rows, 1):
         yield i, len(rows), listing, label_listing(conn, cfg, listing)

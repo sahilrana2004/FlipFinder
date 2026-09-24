@@ -18,7 +18,11 @@ market:
 
 buy_box:
   min_price: 30000
-  max_price: 145000
+  # Raised from 145000. $145k is the target band, but the AVM is far more accurate
+  # above it — 74.4% of test sales within +/-20% at $145-250k against 64.6% at or
+  # below $145k — and 145k left 26 of 1,258 actives to score. The band is still
+  # reachable as a filter in the UI; it is no longer the hard cap.
+  max_price: 250000
   min_sqft: 700
   max_sqft: 2600
   min_beds: 2
@@ -81,6 +85,9 @@ ollama:
   url: "http://localhost:11434"
   model: "qwen3.5:9b"
   photos_per_listing: 4
+  # 15-60s per listing. The $250k buy box holds a few hundred, so a run labels the
+  # best-scoring slice and the next run continues down the list.
+  max_labels_per_run: 150
 
 census:
   acs_year: 2023
