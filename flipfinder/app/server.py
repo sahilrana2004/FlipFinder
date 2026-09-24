@@ -90,6 +90,10 @@ def _listing_payload(conn, cfg, row):
         "distress_score": row["distress_score"],
         "distress_signals": json.loads(row["distress_signals"] or "{}"),
         "score": score["score"] if score else None,
+        # The headline, beside the score rather than only inside components, so the
+        # detail view reads it from the same place the list does.
+        "max_offer": score["max_offer"] if score else None,
+        "offer_discount": score["offer_discount"] if score else None,
         "components": json.loads(score["components"]) if score else None,
         "photos": photos,
         "label": dict(label) if label else None,
@@ -113,6 +117,7 @@ def listings():
     rows = conn.execute(
         """SELECT l.id, l.address, l.city, l.zip, l.price, l.beds, l.baths, l.sqft,
                   l.year_built, l.dom, l.lat, l.lng, s.score, s.margin, s.spread, s.arv,
+                  s.max_offer, s.offer_discount,
                   l.condition_score AS condition, l.reno_scope,
                   a.downgrade, json_array_length(a.red_flags) AS red_flag_count,
                   a.text_conflict,

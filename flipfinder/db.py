@@ -139,6 +139,12 @@ ADDED_COLUMNS = {
     "ai_labels": [
         ("downgrade", "INTEGER"),            # v4+: one step below the margin ceiling
     ],
+    # The headline the app leads with, alongside the margin it is derived from.
+    # score_all rewrites every row each run, so these need no backfill.
+    "scores": [
+        ("max_offer", "REAL"),               # highest price that still clears target_margin
+        ("offer_discount", "REAL"),          # (price - max_offer) / price
+    ],
     "area_stats": [
         # sold_count spans every sale held for the tract (3 years), which compared
         # against a current active count reads as boundless liquidity. Liquidity uses
@@ -168,6 +174,13 @@ BACKFILL = {
     ("sold", "close_ppsf"):
         "UPDATE sold SET close_ppsf = close_price / sqft "
         "WHERE close_price IS NOT NULL AND sqft > 0",
+    # scores is a derived cache -- score_all deletes and rewrites the whole table on
+    # every run -- so a row written before max_offer existed cannot be filled in here
+    # without duplicating the offer formula outside arv.py. Dropping the stale rows
+    # is the honest option: the UI then shows its "no scored listings yet, run
+    # py run.py refresh" empty state instead of rendering every listing as
+    # "No offer -- ARV unavailable", which is what a half-migrated table looks like.
+    ("scores", "max_offer"): "DELETE FROM scores",
 }
 
 
