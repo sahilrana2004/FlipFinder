@@ -41,7 +41,7 @@ def cmd_import(conn, _cfg):
                         ("sold*.csv", redfin.upsert_sold_rows)):
         paths = sorted(data.glob(pattern))
         if not paths:
-            print(f"[import] no {pattern} in {data} — skipped")
+            print(f"[import] no {pattern} in {data} - skipped")
             continue
         for p in paths:
             with open(p, encoding="utf-8-sig", newline="") as f:
@@ -63,7 +63,7 @@ def cmd_import(conn, _cfg):
     # have to overwrite the remarks and photos of every listing pulled before it.
     enrichments = sorted(data.glob("enrich*.json"))
     if not enrichments:
-        print(f"[import] no enrich*.json in {data} — skipped")
+        print(f"[import] no enrich*.json in {data} - skipped")
         return
     for p in enrichments:
         with open(p, encoding="utf-8") as f:
@@ -193,17 +193,34 @@ def cmd_serve(_conn, cfg):
     uvicorn.run("flipfinder.app.server:app", host=s["host"], port=s["port"])
 
 
+def cmd_demo(conn, cfg):
+    """Fabricated data so the app runs with no Redfin access."""
+    from flipfinder import demo
+
+    built = demo.build(conn, cfg)
+    print(f"[demo] {built['sold']} synthetic sales and {built['active']} synthetic listings "
+          f"across {built['tracts']} invented tracts (nothing scraped)")
+    meta = demo.fit_model(conn)
+    print(f"[demo] ARV model fit on {meta['trained_on']} synthetic sales -> {avm.MODEL_PATH}")
+    n = census.refresh_market_stats(conn)
+    print(f"[demo] market stats for {n} tracts")
+    cmd_score(conn, cfg)
+    print("[demo] ready. Now run: py run.py serve")
+
+
+# name -> (handler, one-line description for --help)
 COMMANDS = {
-    "ingest": cmd_ingest,
-    "import": cmd_import,
-    "enrich": cmd_enrich,
-    "ailabel": cmd_ailabel,
-    "census": cmd_census,
-    "score": cmd_score,
-    "fit": cmd_fit,
-    "backtest": cmd_backtest,
-    "train": cmd_train,
-    "serve": cmd_serve,
+    "demo": (cmd_demo, "Build a fabricated dataset and model so the app runs with no data"),
+    "import": (cmd_import, "Load data/{active,sold}*.csv and enrich*.json from the browser fetch"),
+    "ingest": (cmd_ingest, "Pull listings over HTTP (blocked by Redfin's WAF; use the browser script)"),
+    "enrich": (cmd_enrich, "Fetch remarks and photos for listings that are missing them"),
+    "census": (cmd_census, "Assign census tracts and rebuild per-tract market stats"),
+    "score": (cmd_score, "Score every active listing in the buy box"),
+    "ailabel": (cmd_ailabel, "Read listing photos with the local vision model"),
+    "backtest": (cmd_backtest, "Measure the AVM against held-out sales and pick its config"),
+    "train": (cmd_train, "Refit the ARV model on every sale, using the backtest's config"),
+    "fit": (cmd_fit, "Refit the scoring weights from your saved labels"),
+    "serve": (cmd_serve, "Start the web UI"),
 }
 
 
@@ -233,17 +250,32 @@ def cmd_refresh(conn, cfg):
           f"pass {counts['pass']}")
 
 
-COMMANDS["refresh"] = cmd_refresh
-COMMANDS["pipeline"] = cmd_refresh
+COMMANDS["refresh"] = (cmd_refresh, "import -> census -> score -> label -> score (the usual run)")
+COMMANDS["pipeline"] = (cmd_refresh, "Alias for refresh")
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="flipfinder")
-    parser.add_argument("command", choices=list(COMMANDS))
+    parser = argparse.ArgumentParser(
+        prog="flipfinder",
+        description="Find flip candidates: ingest listings, price them, score them, serve them.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="commands:" + "".join(
+            chr(10) + f"  {name:<10} {help_text}"
+            for name, (_, help_text) in COMMANDS.items()
+        ),
+    )
+    parser.add_argument("command", choices=list(COMMANDS), metavar="command",
+                        help="one of the commands listed below")
     args = parser.parse_args()
     cfg = load_config()
     conn = init_db()
-    COMMANDS[args.command](conn, cfg)
+    try:
+        COMMANDS[args.command][0](conn, cfg)
+    except FileNotFoundError as e:
+        # A missing model or missing backtest output is an ordinary "you skipped a
+        # step" on a fresh clone. The message already says which step; a traceback
+        # on top of it just buries the instruction.
+        raise SystemExit(f"[{args.command}] {e}")
 
 
 if __name__ == "__main__":
